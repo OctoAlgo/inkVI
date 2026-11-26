@@ -1,0 +1,118 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Octo <180629317+OctoAlgo@users.noreply.github.com>
+Date: Thu, 26 Nov 2026 02:49:55 +0100
+Subject: [PATCH 30/39] VICTORY_MADE_CHECK on #995's wide sync (fable-lock
+ 3b39c666's check, ported)
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+Kit-Source: own
+Kit-Licence: GPL-3.0
+---
+ crates/victory-gpu/src/descriptor.rs      | 65 +++++++++++++++++++++++
+ crates/victory-gpu/src/descriptor/host.rs |  6 +++
+ 2 files changed, 71 insertions(+)
+
+diff --git a/crates/victory-gpu/src/descriptor.rs b/crates/victory-gpu/src/descriptor.rs
+index 92b698631..30848b0bb 100644
+--- a/crates/victory-gpu/src/descriptor.rs
++++ b/crates/victory-gpu/src/descriptor.rs
+@@ -656,6 +656,24 @@ fn mirror_wide(work: Vec<SyncPage>) -> (u64, u64) {
+     if work.len() < 4 || jobs_n < 2 {
+         return work.iter().map(look).fold((0, 0), |a, b| (a.0 + b.0, a.1 + b.1));
+     }
++    // `VICTORY_MADE_CHECK=1` (LOCAL daily-pr7: fable-lock's check, ported
++    // onto #995's wide sync): every record of the pages, looked at again
++    // once the jobs are done.
++    let checking: Vec<(usize, u32, u64, u64)> = if slots::check() {
++        work.iter()
++            .flat_map(|p| {
++                page_records(p.start, p.step, p.mirrored_count, p.from, p.to, &p.bytes)
++                    .into_iter()
++                    .map(move |(index, handle, record)| {
++                        let w = |n: usize| u32::from_le_bytes([record[4 * n], record[4 * n + 1], record[4 * n + 2], record[4 * n + 3]]);
++                        let key = if record.len() >= 12 { host::words_key([w(0), w(1), w(2)]) } else { 0 };
++                        (p.host, index, handle, key)
++                    })
++            })
++            .collect()
++    } else {
++        Vec::new()
++    };
+     let counts = std::sync::Arc::new([std::sync::atomic::AtomicU64::new(0), std::sync::atomic::AtomicU64::new(0)]);
+     let each = work.len().div_ceil(jobs_n);
+     let mut pages = work.into_iter();
+@@ -673,9 +691,56 @@ fn mirror_wide(work: Vec<SyncPage>) -> (u64, u64) {
+         }));
+     }
+     crate::shadow::wide_run(jobs);
++    if !checking.is_empty() {
++        check_mirrored(&checking);
++    }
+     (counts[0].load(Relaxed), counts[1].load(Relaxed))
+ }
+ 
++/// `VICTORY_MADE_CHECK=1`: every record slot of a wide sync once more, on
++/// this thread: its key must be its record's (made) or 0 (left for later,
++/// or not ours). Anything else is a slot made from something else: a title
++/// write between the sync's read and now (counted "rewritten" when the
++/// record now differs and the slot shows it), or a fault of the striped
++/// locks ("wrong", said with the keys).
++#[cfg(windows)]
++fn check_mirrored(work: &[(usize, u32, u64, u64)]) {
++    use std::sync::atomic::Ordering::Relaxed;
++    static COUNTS: [std::sync::atomic::AtomicU64; 3] = [const { std::sync::atomic::AtomicU64::new(0) }; 3];
++    let (mut ok, mut rewritten, mut wrong) = (0u64, 0u64, 0u64);
++    for &(at, index, handle, key) in work {
++        // SAFETY: a host heap of a registered heap, under the heaps' lock
++        // the caller holds.
++        let host = unsafe { &*(at as *const host::HostHeap) };
++        let Some(now) = host.made_key(index) else { continue };
++        if now == 0 || now == key {
++            ok += 1;
++            continue;
++        }
++        let mut words = [0u8; 12];
++        let read = crate::host::read_into(handle as *const u8, &mut words);
++        let w = |i: usize| u32::from_le_bytes([words[i], words[i + 1], words[i + 2], words[i + 3]]);
++        let record_now = if read { host::words_key([w(0), w(4), w(8)]) } else { 0 };
++        if record_now != key && now == record_now {
++            rewritten += 1;
++        } else {
++            wrong += 1;
++            if COUNTS[2].load(Relaxed) + wrong <= 20 {
++                tracing::warn!(index, key, now, record_now, "VICTORY_MADE_CHECK: a slot the sync mirrored holds another key");
++            }
++        }
++    }
++    let totals: Vec<u64> = COUNTS.iter().zip([ok, rewritten, wrong]).map(|(c, n)| c.fetch_add(n, Relaxed) + n).collect();
++    if wrong > 0 || totals[0] == ok || (totals[0] - ok) >> 20 != totals[0] >> 20 {
++        tracing::info!(
++            ok = totals[0],
++            rewritten = totals[1],
++            wrong = totals[2],
++            "VICTORY_MADE_CHECK: slots the wide sync mirrored, looked at again"
++        );
++    }
++}
++
+ /// Since the last frame line, of [`sync_heaps`]: changed pages of placed
+ /// shader-visible heaps looked at, slots on them, slots whose record was
+ /// not the one last seen (mirrored), and the microseconds it took.
+diff --git a/crates/victory-gpu/src/descriptor/host.rs b/crates/victory-gpu/src/descriptor/host.rs
+index e482f167b..0dfec7d60 100644
+--- a/crates/victory-gpu/src/descriptor/host.rs
++++ b/crates/victory-gpu/src/descriptor/host.rs
+@@ -2980,6 +2980,12 @@ impl HostHeap {
+         Some(view)
+     }
+ 
++    /// Slot `index`'s key: its record's key when made, 0 when not
++    /// (`VICTORY_MADE_CHECK`); `None` past the heap's end.
++    pub(crate) fn made_key(&self, index: u32) -> Option<u64> {
++        self.made.get(index)
++    }
++
+     /// Whether slot `index` is backed by a made host descriptor (tests).
+     #[cfg(test)]
+     pub(crate) fn made(&self, index: u32) -> bool {

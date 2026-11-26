@@ -1,0 +1,87 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Octo <180629317+OctoAlgo@users.noreply.github.com>
+Date: Wed, 25 Nov 2026 18:08:03 +0100
+Subject: [PATCH 11/39] ambient stand-in compiles through the DXC fallback;
+ #995's title tests on Windows only
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_011dFkrUVYjMaeV1b3VJ4JEb
+
+Kit-Source: own (build fix for #917 under the DXC fallback)
+Kit-Licence: GPL-3.0
+---
+ crates/victory-gpu/src/ambient.rs     | 38 ++++-----------------------
+ crates/victory-shader/src/emit/mod.rs |  2 +-
+ 2 files changed, 6 insertions(+), 34 deletions(-)
+
+diff --git a/crates/victory-gpu/src/ambient.rs b/crates/victory-gpu/src/ambient.rs
+index 9858f5e78..9ceae9d61 100644
+--- a/crates/victory-gpu/src/ambient.rs
++++ b/crates/victory-gpu/src/ambient.rs
+@@ -20,11 +20,8 @@
+ 
+ use std::sync::OnceLock;
+ use std::sync::atomic::{AtomicU32, Ordering};
+-use windows::Win32::Graphics::Direct3D::Fxc::D3DCompile;
+-use windows::Win32::Graphics::Direct3D::ID3DBlob;
+ use windows::Win32::Graphics::Direct3D12::*;
+ use windows::Win32::Graphics::Dxgi::Common::*;
+-use windows::core::s;
+ 
+ use crate::host::{HostList, host};
+ use crate::object::This;
+@@ -93,36 +90,11 @@ unsafe impl Send for Pass {}
+ unsafe impl Sync for Pass {}
+ 
+ fn make(device: &ID3D12Device) -> windows::core::Result<Pass> {
+-    let mut code: Option<ID3DBlob> = None;
+-    let mut errors: Option<ID3DBlob> = None;
+-    // SAFETY: the source and names live through the call; out pointers ours.
+-    let compiled = unsafe {
+-        D3DCompile(
+-            SOURCE.as_ptr().cast(),
+-            SOURCE.len(),
+-            s!("ambient"),
+-            None,
+-            None,
+-            s!("main"),
+-            s!("cs_5_1"),
+-            0,
+-            0,
+-            &mut code,
+-            Some(&mut errors),
+-        )
+-    };
+-    let text = |b: &ID3DBlob| {
+-        // SAFETY: the blob's own bytes.
+-        unsafe { std::slice::from_raw_parts(b.GetBufferPointer().cast::<u8>(), b.GetBufferSize()) }
+-            .to_vec()
+-    };
+-    if let Err(e) = compiled {
+-        if let Some(errors) = errors {
+-            tracing::warn!("the stand-in for indirect light does not compile: {}", String::from_utf8_lossy(&text(&errors)));
+-        }
+-        return Err(e);
+-    }
+-    let code = text(&code.ok_or_else(windows::core::Error::empty)?);
++    // LOCAL (daily-pr1): through the DXC fallback (Wine's d3dcompiler drops the
++    // root signature).
++    let code = crate::dxc::compile(SOURCE, "main", "cs_5_1").inspect_err(|e| {
++        tracing::warn!(error = %e, "the stand-in for indirect light does not compile");
++    })?;
+     // SAFETY: the root signature is inside the shader; plain creations.
+     unsafe {
+         let root: ID3D12RootSignature = device.CreateRootSignature(0, &code)?;
+diff --git a/crates/victory-shader/src/emit/mod.rs b/crates/victory-shader/src/emit/mod.rs
+index 77b6ecac8..6f2521124 100644
+--- a/crates/victory-shader/src/emit/mod.rs
++++ b/crates/victory-shader/src/emit/mod.rs
+@@ -89,7 +89,7 @@ mod diff_tests;
+ mod intersect_tests;
+ #[cfg(all(test, windows))]
+ mod mask_join_tests;
+-#[cfg(test)]
++#[cfg(all(test, windows))] // LOCAL (daily-pr1): Windows-only modules (validator, host)
+ mod title_tests;
+ #[cfg(all(windows, any(test, feature = "host")))]
+ pub mod host;

@@ -1,0 +1,31 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Octo <180629317+OctoAlgo@users.noreply.github.com>
+Date: Thu, 26 Nov 2026 00:20:34 +0100
+Subject: [PATCH 27/39] VICTORY_EXIT_AFTER_SHOTS hook in the frame shot
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_011dFkrUVYjMaeV1b3VJ4JEb
+
+Kit-Source: own (run tooling, opt-in)
+Kit-Licence: GPL-3.0
+---
+ crates/victory-gpu/src/shot.rs | 6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/crates/victory-gpu/src/shot.rs b/crates/victory-gpu/src/shot.rs
+index d248e5c46..3658640bc 100644
+--- a/crates/victory-gpu/src/shot.rs
++++ b/crates/victory-gpu/src/shot.rs
+@@ -1066,7 +1066,11 @@ fn finish(carry: &Carry, to: &std::path::Path, how: &str, missing: u32) {
+         failed = carry.failed,
+         missing,
+         "frame shot saved"
+-    );
++    );    // LOCAL (tools-iter): VICTORY_EXIT_AFTER_SHOTS=1 ends the run once the
++    // last VICTORY_SHOT_AT frame is behind.
++    if let Some(&last) = at().iter().max() {
++        crate::iterate::shot_saved(last);
++    }
+ }
+ 
+ #[cfg(test)]

@@ -1,0 +1,89 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Octo <180629317+OctoAlgo@users.noreply.github.com>
+Date: Wed, 25 Nov 2026 17:05:52 +0100
+Subject: [PATCH 04/39] scripted keys VICTORY_KEYS_HOLD / VICTORY_KEYS_FILE
+ (diagnostics only)
+
+Test aids for headless runs, inside the diagnostics-only scripted()
+input: VICTORY_KEYS_HOLD=<seconds> sets how long a VICTORY_KEYS press is
+held (default 0.2 s); VICTORY_KEYS_FILE=<path> presses keys appended to a
+file as "<key> [seconds]" lines. Not compiled into the release build.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+Kit-Source: own (diagnostics build only)
+Kit-Licence: GPL-3.0
+---
+ crates/victory-hle/src/modules/gameinput.rs | 56 +++++++++++++++++++--
+ 1 file changed, 53 insertions(+), 3 deletions(-)
+
+diff --git a/crates/victory-hle/src/modules/gameinput.rs b/crates/victory-hle/src/modules/gameinput.rs
+index 838826e11..4f1460074 100644
+--- a/crates/victory-hle/src/modules/gameinput.rs
++++ b/crates/victory-hle/src/modules/gameinput.rs
+@@ -1229,12 +1229,62 @@ mod host {
+             });
+             (Instant::now(), keys.collect())
+         });
++        // Local change: `VICTORY_KEYS_HOLD=<seconds>` (default 0.2) so slow
++        // (software-rendered) frames still see the press.
++        static HOLD: LazyLock<Duration> = LazyLock::new(|| {
++            std::env::var("VICTORY_KEYS_HOLD")
++                .ok()
++                .and_then(|v| v.trim().parse::<f64>().ok())
++                .and_then(|s| Duration::try_from_secs_f64(s).ok())
++                .unwrap_or(Duration::from_millis(200))
++        });
+         let (start, keys) = &*SCRIPT;
+         let now = start.elapsed();
+-        keys.iter()
+-            .filter(|&&(at, _)| (at..at + Duration::from_millis(200)).contains(&now))
++        let mut down: Vec<u8> = keys
++            .iter()
++            .filter(|&&(at, _)| (at..at + *HOLD).contains(&now))
+             .map(|&(_, vk)| vk)
+-            .collect()
++            .collect();
++        down.extend(from_file());
++        down
++    }
++
++    /// Local change: `VICTORY_KEYS_FILE=<path>`: every line appended to the
++    /// file, `<key> [seconds]`, holds that key from when it is seen (0.2 s
++    /// unless given). Keys as in `VICTORY_KEYS`.
++    #[cfg(feature = "diagnostics")]
++    fn from_file() -> Vec<u8> {
++        use std::sync::Mutex;
++        static STATE: Mutex<(usize, Vec<(Instant, u8)>)> = Mutex::new((0, Vec::new()));
++        let Some(path) = std::env::var_os("VICTORY_KEYS_FILE") else { return Vec::new() };
++        let mut state = STATE.lock().unwrap();
++        let text = std::fs::read_to_string(path).unwrap_or_default();
++        let lines: Vec<&str> = text.lines().collect();
++        // a last line without its newline is still being written
++        let complete = if text.ends_with('\n') { lines.len() } else { lines.len().saturating_sub(1) };
++        let seen = state.0.min(complete);
++        for line in &lines[seen..complete] {
++            let mut parts = line.split_whitespace();
++            let vk = match parts.next() {
++                Some("Enter") => 0x0D,
++                Some("Esc") => 0x1B,
++                Some("Tab") => 0x09,
++                Some("Back") => 0x08,
++                Some("Up") => 0x26,
++                Some("Down") => 0x28,
++                Some("Left") => 0x25,
++                Some("Right") => 0x27,
++                Some(k) if k.len() == 1 && k.as_bytes()[0].is_ascii_alphanumeric() => k.as_bytes()[0].to_ascii_uppercase(),
++                _ => continue,
++            };
++            let secs = parts.next().and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.2);
++            let until = Instant::now() + Duration::try_from_secs_f64(secs).unwrap_or(Duration::from_millis(200));
++            state.1.push((until, vk));
++        }
++        state.0 = complete;
++        let now = Instant::now();
++        state.1.retain(|&(until, _)| now < until);
++        state.1.iter().map(|&(_, vk)| vk).collect()
+     }
+ 
+     /// The foreground window is one of ours (the title's or our fallback).

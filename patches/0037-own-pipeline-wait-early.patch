@@ -1,0 +1,134 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Octo <180629317+OctoAlgo@users.noreply.github.com>
+Date: Thu, 26 Nov 2026 13:28:55 +0100
+Subject: [PATCH 37/39] VICTORY_PIPELINE_WAIT_EARLY_MS: a pipeline's first draw
+ waits for it while early pipelines are queued (dark-cell fix)
+
+Round 9b: the dark cell comes from host pipelines missing from the NVIDIA
+driver's shader cache (first run of a new build, or the ~1 GB cache's
+cleanup): each early pipeline then takes the driver 1-5 s, the early queue
+needs minutes, the world starts meanwhile and its first passes are dropped
+(PIPELINE_WAIT_MS=0). With the switch, the first draw/dispatch asking for a
+pipeline not made yet waits up to <ms> for it (once per pipeline) while the
+early list is still queued. Off unless set.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+Kit-Source: own (dark-cell fix, step 1)
+Kit-Licence: GPL-3.0
+---
+ crates/victory-gpu/src/pipeline/make.rs | 69 +++++++++++++++++++++++--
+ 1 file changed, 66 insertions(+), 3 deletions(-)
+
+diff --git a/crates/victory-gpu/src/pipeline/make.rs b/crates/victory-gpu/src/pipeline/make.rs
+index b00e76db9..61bd1297e 100644
+--- a/crates/victory-gpu/src/pipeline/make.rs
++++ b/crates/victory-gpu/src/pipeline/make.rs
+@@ -171,12 +171,18 @@ pub(crate) fn waiting() -> u64 {
+ pub(crate) fn ready(p: &Arc<Pending>) -> Option<&HostPipeline> {
+     // A still-pending pipeline was requested by the title too. Prewarm it
+     // on the next launch, even if this run never got to use it.
+-    if !p.used.load(Ordering::Relaxed) && !p.used.swap(true, Ordering::Relaxed) {
++    let first = !p.used.load(Ordering::Relaxed) && !p.used.swap(true, Ordering::Relaxed);
++    if first {
+         super::library::note_used(&p.key);
+     }
+     if p.made.get().is_none() {
+         start(p, REQUESTED);
+-        wait(p, crate::frame::current());
++        let early = early_wait();
++        if first && !early.is_zero() && EARLY_LEFT.load(Ordering::Relaxed) > 0 {
++            wait_once(p, early);
++        } else {
++            wait(p, crate::frame::current());
++        }
+     }
+     let made = p.made.get()?.as_ref();
+     // The first time the made pipeline goes to a draw or dispatch: noted
+@@ -190,6 +196,54 @@ pub(crate) fn ready(p: &Arc<Pending>) -> Option<&HostPipeline> {
+     made
+ }
+ 
++/// `VICTORY_PIPELINE_WAIT_EARLY_MS=<ms>` (off unless set): while pipelines
++/// listed for an early start are still queued, a draw or dispatch that is
++/// the first to ask for a pipeline not made yet waits for it up to <ms>
++/// (once per pipeline, outside the frame's budget) instead of being dropped.
++/// Round 9b's dark cell: when the host pipelines are not in the driver's
++/// shader cache (a new build's first run; the 1 GB NVIDIA cache cleaned
++/// up), each early pipeline takes the driver 1-5 s, the queue needs
++/// minutes, the world starts meanwhile and its first passes go out without
++/// their pipelines (`VICTORY_PIPELINE_WAIT_MS=0`): the cell stays dark.
++fn early_wait() -> Duration {
++    static MS: OnceLock<Duration> = OnceLock::new();
++    *MS.get_or_init(|| {
++        let ms = std::env::var("VICTORY_PIPELINE_WAIT_EARLY_MS")
++            .ok()
++            .and_then(|v| v.trim().parse::<u64>().ok())
++            .unwrap_or(0);
++        if ms > 0 {
++            tracing::info!(ms, "a pipeline's first draw waits for it while early pipelines are queued");
++        }
++        Duration::from_millis(ms)
++    })
++}
++
++/// Entries in the queue's early list (stale ones included).
++static EARLY_LEFT: AtomicU64 = AtomicU64::new(0);
++/// First draws that waited under [`early_wait`]: how many, and how many
++/// got their pipeline in time.
++pub(crate) static EARLY_WAITS: [AtomicU64; 2] = [const { AtomicU64::new(0) }; 2];
++
++fn wait_once(p: &Pending, most: Duration) {
++    let started = Instant::now();
++    let (lock, done) = &DONE;
++    let mut held = lock.lock().unwrap_or_else(|e| e.into_inner());
++    while p.made.get().is_none() {
++        let rest = most.saturating_sub(started.elapsed());
++        if rest.is_zero() {
++            break;
++        }
++        held = done.wait_timeout(held, rest).unwrap_or_else(|e| e.into_inner()).0;
++    }
++    drop(held);
++    EARLY_WAITS[0].fetch_add(1, Ordering::Relaxed);
++    if p.made.get().is_some() {
++        EARLY_WAITS[1].fetch_add(1, Ordering::Relaxed);
++    }
++    crate::framelog::add(crate::framelog::T::PipelineWaitUs, started.elapsed().as_micros() as u64);
++}
++
+ /// Pipelines made again for the formats bound at a draw, since the start.
+ static VARIANTS: AtomicU64 = AtomicU64::new(0);
+ 
+@@ -359,6 +413,7 @@ impl Queue {
+             self.requested.push_back(p.clone());
+         } else {
+             self.early.push_back(p.clone());
++            EARLY_LEFT.fetch_add(1, Ordering::Relaxed);
+         }
+         Some(prev == NOT_QUEUED)
+     }
+@@ -366,7 +421,13 @@ impl Queue {
+     fn pop(&mut self) -> Option<Arc<Pending>> {
+         let p = self.requested.pop_front().or_else(|| {
+             // An early entry can have been promoted and claimed already.
+-            std::iter::from_fn(|| self.early.pop_front())
++            std::iter::from_fn(|| {
++                let p = self.early.pop_front();
++                if p.is_some() {
++                    EARLY_LEFT.fetch_sub(1, Ordering::Relaxed);
++                }
++                p
++            })
+                 .find(|p| p.queue_state.load(Ordering::Relaxed) == EARLY)
+         })?;
+         p.queue_state.store(MAKING, Ordering::Relaxed);
+@@ -511,6 +572,8 @@ fn watch() {
+                 made = MADE.load(Ordering::Relaxed),
+                 loaded = LOADED.load(Ordering::Relaxed),
+                 started_early = EARLY.load(Ordering::Relaxed),
++                first_waits = EARLY_WAITS[0].load(Ordering::Relaxed),
++                first_waits_made = EARLY_WAITS[1].load(Ordering::Relaxed),
+                 workers = %workers.join(" "),
+                 calls = %super::library::calls_now(),
+                 "pipeline workers"

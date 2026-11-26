@@ -1,0 +1,166 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Octo <180629317+OctoAlgo@users.noreply.github.com>
+Date: Thu, 26 Nov 2026 00:20:34 +0100
+Subject: [PATCH 26/39] runs end when their purpose is done; press-until-ready
+ keys
+
+VICTORY_EXIT_AT_FRAME, VICTORY_EXIT_AFTER_SECS, VICTORY_EXIT_AFTER_SHOTS (iterate::shot_saved),
+VICTORY_KEYS r<start>/<every>:<key> (pressed until world frame 0).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_011dFkrUVYjMaeV1b3VJ4JEb
+
+Kit-Source: own (run tooling, opt-in)
+Kit-Licence: GPL-3.0
+---
+ crates/victory-gpu/src/iterate.rs           | 54 +++++++++++++++++----
+ crates/victory-hle/src/modules/gameinput.rs | 12 ++++-
+ 2 files changed, 56 insertions(+), 10 deletions(-)
+
+diff --git a/crates/victory-gpu/src/iterate.rs b/crates/victory-gpu/src/iterate.rs
+index 0a007605e..e492f52cc 100644
+--- a/crates/victory-gpu/src/iterate.rs
++++ b/crates/victory-gpu/src/iterate.rs
+@@ -14,6 +14,11 @@
+ //! * `VICTORY_WINDOW=<a>-<b>`: at world frame `b` a line with the window's
+ //!   frames, seconds and fps; with `VICTORY_EXIT_AFTER_WINDOW=1` the process
+ //!   then ends (exit code 0), so a run lasts only as long as it must.
++//! * `VICTORY_EXIT_AT_FRAME=<w>`: the process ends at world frame `w`;
++//!   `VICTORY_EXIT_AFTER_SECS=<s>`: at the first present `s` seconds after
++//!   the first present (intro-only checks, before any world frame);
++//!   `VICTORY_EXIT_AFTER_SHOTS=1`: once the last `VICTORY_SHOT_AT` frame is
++//!   behind and a shot has been written ([`shot_saved`], diagnostics).
+ //! * `VICTORY_TOUCH_AT=<w>,<w>...` with `VICTORY_TOUCH_FILE=<path>`: at
+ //!   each of those world frames the file is written (`1`): an outside tool
+ //!   waiting for it acts on a known frame (RenderDoc's trigger file, rdhook).
+@@ -39,6 +44,8 @@ pub fn world_frame() -> Option<u64> {
+ }
+ 
+ struct Setup {
++    exit_at: Option<u64>,
++    exit_secs: Option<f64>,
+     touch: Vec<u64>,
+     touch_file: Option<std::path::PathBuf>,
+     marks: u64,
+@@ -64,10 +71,36 @@ fn setup() -> &'static Setup {
+             .filter_map(|w| w.trim().parse().ok())
+             .collect();
+         let touch_file = std::env::var_os("VICTORY_TOUCH_FILE").map(std::path::PathBuf::from);
+-        Setup { touch, touch_file, marks, window, exit }
++        let exit_at = std::env::var("VICTORY_EXIT_AT_FRAME").ok().and_then(|v| v.trim().parse().ok());
++        let exit_secs = std::env::var("VICTORY_EXIT_AFTER_SECS").ok().and_then(|v| v.trim().parse().ok());
++        if exit_at.is_some() || exit_secs.is_some() {
++            tracing::info!(?exit_at, ?exit_secs, "the run ends by itself (VICTORY_EXIT_AT_FRAME / VICTORY_EXIT_AFTER_SECS)");
++        }
++        Setup { exit_at, exit_secs, touch, touch_file, marks, window, exit }
+     })
+ }
+ 
++/// Ends the process now (exit code 0), saying why.
++pub fn end_run(why: &str) {
++    tracing::info!(why, "ending the process (tools-iter)");
++    #[cfg(windows)]
++    // SAFETY: plain calls; the run is over.
++    unsafe {
++        use windows_sys::Win32::System::Threading::{GetCurrentProcess, TerminateProcess};
++        TerminateProcess(GetCurrentProcess(), 0);
++    }
++    std::process::exit(0);
++}
++
++/// A frame shot was written (diagnostics); `last` is the last frame of
++/// `VICTORY_SHOT_AT`. With `VICTORY_EXIT_AFTER_SHOTS=1` the run ends once
++/// that frame is behind.
++pub fn shot_saved(last: u64) {
++    if std::env::var_os("VICTORY_EXIT_AFTER_SHOTS").is_some_and(|v| v == "1") && world_frame().is_some_and(|w| w >= last) {
++        end_run("VICTORY_EXIT_AFTER_SHOTS=1: the last shot is written");
++    }
++}
++
+ /// At the present of `frame` (counted from 1), with `drawn` draws run on
+ /// the host so far.
+ pub(crate) fn present(frame: u64, drawn: u64) {
+@@ -76,6 +109,13 @@ pub(crate) fn present(frame: u64, drawn: u64) {
+     static WINDOW_START: OnceLock<Instant> = OnceLock::new();
+     static MARK: std::sync::Mutex<Option<Instant>> = std::sync::Mutex::new(None);
+     LAST.store(frame, Relaxed);
++    static FIRST: OnceLock<Instant> = OnceLock::new();
++    let first = *FIRST.get_or_init(Instant::now);
++    if let Some(secs) = setup().exit_secs {
++        if first.elapsed().as_secs_f64() >= secs {
++            end_run("VICTORY_EXIT_AFTER_SECS");
++        }
++    }
+     if drawn.saturating_sub(DRAWN.swap(drawn, Relaxed)) >= 500
+         && WORLD.compare_exchange(u64::MAX, frame, Relaxed, Relaxed).is_ok()
+     {
+@@ -86,6 +126,9 @@ pub(crate) fn present(frame: u64, drawn: u64) {
+     let s = setup();
+     let now = Instant::now();
+     let since = START.get().map_or(0.0, |t| now.duration_since(*t).as_secs_f64());
++    if s.exit_at == Some(w) {
++        end_run("VICTORY_EXIT_AT_FRAME");
++    }
+     if let Some(file) = &s.touch_file {
+         if s.touch.contains(&w) {
+             let r = std::fs::write(file, b"1");
+@@ -116,14 +159,7 @@ pub(crate) fn present(frame: u64, drawn: u64) {
+                 );
+             }
+             if s.exit {
+-                tracing::info!("VICTORY_EXIT_AFTER_WINDOW=1: ending the process");
+-                #[cfg(windows)]
+-                // SAFETY: plain calls; the run is over.
+-                unsafe {
+-                    use windows_sys::Win32::System::Threading::{GetCurrentProcess, TerminateProcess};
+-                    TerminateProcess(GetCurrentProcess(), 0);
+-                }
+-                std::process::exit(0);
++                end_run("VICTORY_EXIT_AFTER_WINDOW=1");
+             }
+         }
+     }
+diff --git a/crates/victory-hle/src/modules/gameinput.rs b/crates/victory-hle/src/modules/gameinput.rs
+index 7bb46a724..85483281a 100644
+--- a/crates/victory-hle/src/modules/gameinput.rs
++++ b/crates/victory-hle/src/modules/gameinput.rs
+@@ -1222,6 +1222,9 @@ mod host {
+         World(u64, u64),
+         /// Presents, first and last.
+         Present(u64, u64),
++        /// From this present on, every so many presents (held for 2),
++        /// until world frame 0: `r<start>/<every>` ("press until it starts").
++        Repeat(u64, u64),
+     }
+ 
+     impl When {
+@@ -1235,7 +1238,10 @@ mod host {
+                     None => rest.parse().ok().map(|a: u64| (a, a + HOLD.max(1) - 1)),
+                 }
+             };
+-            if let Some(rest) = at.strip_prefix('w') {
++            if let Some(rest) = at.strip_prefix('r') {
++                let (a, b) = rest.split_once('/')?;
++                Some(When::Repeat(a.parse().ok()?, b.parse::<u64>().ok()?.max(4)))
++            } else if let Some(rest) = at.strip_prefix('w') {
+                 frames(rest).map(|(a, b)| When::World(a, b))
+             } else if let Some(rest) = at.strip_prefix('f') {
+                 frames(rest).map(|(a, b)| When::Present(a, b))
+@@ -1256,6 +1262,9 @@ mod host {
+     /// of game time in every run) or `f<N>[-<M>]` (presents since the
+     /// start); the key is held from frame N through M (N plus
+     /// `VICTORY_KEYS_HOLD_FRAMES` - 1 unless given; 2 frames by default).
++    /// `r<start>/<every>:<key>`: pressed every <every> presents from present
++    /// <start> on, until world frame 0 (the start screen's Enter as soon as
++    /// it listens, nothing once the world runs).
+     fn scripted() -> Vec<u8> {
+         static SCRIPT: LazyLock<(Instant, Vec<(When, u8)>)> = LazyLock::new(|| {
+             let list = std::env::var("VICTORY_KEYS").unwrap_or_default();
+@@ -1298,6 +1307,7 @@ mod host {
+                 When::Time(at) => (at..at + *HOLD).contains(&now),
+                 When::World(a, b) => world.is_some_and(|w| (a..=b).contains(&w)),
+                 When::Present(a, b) => (a..=b).contains(&presents),
++                When::Repeat(a, every) => world.is_none() && presents >= a && (presents - a) % every < 2,
+             })
+             .map(|&(_, vk)| vk)
+             .collect();

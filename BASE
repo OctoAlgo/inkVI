@@ -1,0 +1,5 @@
+BASE_URL=https://github.com/fxceless/victory-fork
+BASE_COMMIT=ceb9e1f7a0180e61961bfde85d69d24e2dd84b39
+# #995 compiled compute shader (not shipped here): taken from the PR head when no DXC is given
+BRIGHTEN_FROM=7406afbbd9cef0dcddef0b0a23b4855437715eb5
+BRIGHTEN_SHA256=336e071ee42165b432da2e0a0571f30ba47a1b9ae6888494a1e88908eafd4526

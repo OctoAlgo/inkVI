@@ -1,0 +1,897 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Octo <180629317+OctoAlgo@users.noreply.github.com>
+Date: Thu, 26 Nov 2026 08:25:06 +0100
+Subject: [PATCH 33/39] VICTORY_BACK_NO_WAIT=1, title copies into flights'
+ writes run at once, marked fresher than their landing
+
+The submitting thread stood ~38 ms a frame in one relay title-read wait
+for a title buffer copy (Step::Copy) whose destination touches ranges
+flights in the air declared their shaders write. A copy whose source
+touches them is already not waited for (copy_ahead); what waited were
+copies INTO such memory. In queue order such a copy runs after those
+flights, so its bytes must win over what they wrote.
+
+With VICTORY_BACK_NO_WAIT=1 (taken only with the relay's second stage
+and copies in the card's memory that have a CPU side; unset/0: as before):
+
+- blocked_in (late_blocked, relay_read_wait's done): a copy whose
+  destination touches the flights' writes and whose source does not is
+  not waited for; one whose source touches still waits as before
+  (counted).
+- At the copy (run_deferred, fresher_copy): a mark (destination range,
+  this submission's number) is set before the bytes are written; the
+  copy then waits only while a landing write is between its look at the
+  marks and its store (back_no_wait::Writing, SeqCst counter, bounded).
+  Title memory in place still waits until the card has run the flights
+  that declared it there.
+- After the copy, Shadow::fresher_push puts every byte of the destination
+  under the flights' pending ranges into the copies those flights hold
+  (PC side + snapshot; or the CPU side of a card copy, sent up ahead of
+  this submission's lists): the refresh leaves pending ranges alone, so
+  the submission's own shaders would otherwise read the old bytes there,
+  and a later merge would take the card's old bytes for a shader write.
+- Landing paths leave bytes under a mark alone when every flight they
+  land for is below the mark: Shadow::relay_merge (merge_piece run per
+  piece outside the marks, held untouched under them, the stretch stored
+  piece by piece: put_back_outside), Shadow::card_merge_relay (marks join
+  the dirty/sent skip, stored piece by piece), texback::land and the
+  buffer read-backs in read_backs (by their own flight's number). The
+  merges get the landing's last flight number from back_no_wait::landing,
+  set by relay_land.
+- Marks are pruned once finished() >= number - 1.
+- Frame line: copies run at once (KB, KB put into copies), copies still
+  waited for, landing bytes skipped under marks, time standing for
+  landing writes, marks held.
+
+Residual race: a flight still running on the card that writes such a
+byte after it was put into a PC-side copy leaves the card's byte in the
+copy; its own landing keeps the title's byte, a later landing not below
+the mark takes the card's (as merge_under_writes already allows).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+Kit-Source: own (opt-in)
+Kit-Licence: GPL-3.0
+---
+ crates/victory-gpu/src/host.rs              | 154 ++++++++++-
+ crates/victory-gpu/src/host/back_no_wait.rs | 277 ++++++++++++++++++++
+ crates/victory-gpu/src/shadow.rs            | 143 +++++++++-
+ crates/victory-gpu/src/texback.rs           |  16 +-
+ 4 files changed, 578 insertions(+), 12 deletions(-)
+ create mode 100644 crates/victory-gpu/src/host/back_no_wait.rs
+
+diff --git a/crates/victory-gpu/src/host.rs b/crates/victory-gpu/src/host.rs
+index 4e9e431f2..028cf2665 100644
+--- a/crates/victory-gpu/src/host.rs
++++ b/crates/victory-gpu/src/host.rs
+@@ -4968,6 +4968,10 @@ struct Line {
+     /// slots) of flights the card has run, taken out of their lists before
+     /// the landing, to be dropped outside the lock by [`land`].
+     released: Vec<crate::draw::State>,
++    /// With [`back_no_wait::on`]: the declared shader writes of the
++    /// flights being landed (taken out of `line`), whose copies a title copy
++    /// into those ranges puts its bytes into (`Shadow::fresher_push`).
++    landing_back: Vec<Declared>,
+ }
+ 
+ // SAFETY: D3D12 objects (free-threaded) and host lists nothing records
+@@ -4987,6 +4991,7 @@ static LINE: Mutex<Line> = Mutex::new(Line {
+     landing: 0,
+     read_back: Vec::new(),
+     released: Vec::new(),
++    landing_back: Vec::new(),
+ });
+ /// Told when a flight joins [`LINE`] or it is poked.
+ static LINE_MOVED: std::sync::Condvar = std::sync::Condvar::new();
+@@ -6474,13 +6479,21 @@ fn late_blocked(runs: &[&HostList], count: bool) -> Option<usize> {
+         }
+         line.written.clone()
+     };
+-    blocked_by(&written, runs, count)
++    blocked_in(&written, runs, count, back_no_wait::on())
+ }
+ 
+ /// [`late_blocked`] against `written`, the title memory flights' shaders
+ /// may write (in order, joined); `count` whether the kind of read is
+ /// counted for the frame line.
+ fn blocked_by(written: &[(usize, usize)], runs: &[&HostList], count: bool) -> Option<usize> {
++    blocked_in(written, runs, count, false)
++}
++
++/// [`blocked_by`]; with `fresh` ([`back_no_wait::on`]) a title copy whose
++/// destination touches `written` and whose source does not is not waited
++/// for: it runs at once and marks its destination fresher than the flights'
++/// landing (`back_no_wait`). One whose source touches waits as before.
++fn blocked_in(written: &[(usize, usize)], runs: &[&HostList], count: bool, fresh: bool) -> Option<usize> {
+     if written.is_empty() {
+         return None;
+     }
+@@ -6494,6 +6507,17 @@ fn blocked_by(written: &[(usize, usize)], runs: &[&HostList], count: bool) -> Op
+             if ahead && read_ahead(step, written).is_some() {
+                 continue;
+             }
++            if fresh
++                && let &Step::Copy(dst, src, len) = step
++                && touches(written, dst, dst + len)
++            {
++                if !touches(written, src, src + len) {
++                    continue;
++                }
++                if count {
++                    back_no_wait::waited();
++                }
++            }
+             if let Some((why, stat)) = step_blocks(step, written) {
+                 if count && let Some(n) = LATE_STATS.get(stat) {
+                     n.fetch_add(1, Ordering::Relaxed);
+@@ -7533,6 +7557,7 @@ pub(crate) fn first_landing(fences: &[Option<u64>]) -> usize {
+ /// anything a caller of [`Host::settle`] may hold: resetting the landed
+ /// lists and looking at what queues hold are left to [`late_helper`].
+ mod fence_early;
++pub(crate) mod back_no_wait;
+ 
+ fn relay_worker() {
+     let Some(host) = host() else {
+@@ -7589,6 +7614,16 @@ fn relay_worker() {
+                     }
+                 }
+                 line.landing = items.iter().filter(|l| matches!(l, Late::Run(_))).count();
++                if back_no_wait::on() {
++                    line.landing_back = items
++                        .iter()
++                        .filter_map(|l| match l {
++                            Late::Run(flight) => Some(flight.back.iter().cloned()),
++                            _ => None,
++                        })
++                        .flatten()
++                        .collect();
++                }
+                 line.in_hand = items
+                     .iter()
+                     .filter_map(|l| match l {
+@@ -7670,6 +7705,7 @@ fn late_line(frames: f64) {
+     fill_check::line();
+     fill_ahead::line(frames);
+     crate::early::line(frames);
++    back_no_wait::line(frames);
+     let s: Vec<f64> = LATE_STATS.iter().map(|s| s.swap(0, Ordering::Relaxed) as f64 / frames).collect();
+     tracing::info!(
+         "submissions sent ahead per frame: {:.1} in {:.1} settles ({:.1} flights each time), {:.1} ms waiting for the card in them; \
+@@ -7967,11 +8003,14 @@ pub(crate) fn walls_trace() -> bool {
+ /// ([`late`]) did not, at any stage: the flights' lists were settled
+ /// without it, so the title read a buffer nobody wrote, as before read-backs
+ /// were made (the exposure metering's two small float targets, every frame).
+-fn read_backs(list: &HostList) {
++///
++/// `number` is the submission the list ran in: title bytes under marks of
++/// later submissions' title copies ([`back_no_wait`]) are left alone.
++fn read_backs(list: &HostList, number: u64) {
+     // Textures shaders wrote that the title reads on the CPU
+     // ([`crate::texback`]).
+     for back in &list.deferred().texture_backs {
+-        crate::texback::land(back);
++        crate::texback::land(back, number);
+     }
+     for (buffer, at, [row, rows, pitch]) in &list.deferred().backs {
+         let mut data = std::ptr::null_mut();
+@@ -7981,8 +8020,24 @@ fn read_backs(list: &HostList) {
+         unsafe {
+             if buffer.Map(0, None, Some(&mut data)).is_ok() && !data.is_null() {
+                 let from = data.cast::<u8>().cast_const();
++                let end = *at + rows.saturating_sub(1) * pitch + *row;
++                let (_writing, marked) = back_no_wait::skips(*at, end, number);
+                 for line in 0..*rows {
+-                    std::ptr::copy_nonoverlapping(from.add(line * row.next_multiple_of(256)), (*at as *mut u8).add(line * pitch), *row);
++                    let (src, dst) = (from.add(line * row.next_multiple_of(256)), (*at as *mut u8).add(line * pitch));
++                    if marked.is_empty() {
++                        std::ptr::copy_nonoverlapping(src, dst, *row);
++                        continue;
++                    }
++                    // Only the row's bytes outside the marks.
++                    let first = dst as usize;
++                    let parts = crate::shadow::outside(first, first + *row, marked.clone());
++                    let kept: usize = parts.iter().map(|&(a, b)| b - a).sum();
++                    if kept < *row {
++                        back_no_wait::skipped((*row - kept) as u64);
++                    }
++                    for (a, b) in parts {
++                        std::ptr::copy_nonoverlapping(src.add(a - first), a as *mut u8, b - a);
++                    }
+                 }
+                 if crate::results::trace() {
+                     crate::results::landed(*at);
+@@ -9943,6 +9998,9 @@ impl Host {
+                 let plans: Vec<(u64, &CardPlan)> = flights.iter().filter_map(|f| f.card.as_ref().map(|card| (f.number, card))).collect();
+                 let behind = flights.iter().map(|f| f.fence).max().unwrap_or(0);
+                 let landed = flights.iter().map(|f| f.number).max().unwrap_or(0);
++                // What the merges below write is for flights up to `landed`
++                // (title copies marked fresher than them: `back_no_wait`).
++                back_no_wait::landing_set(landed);
+                 self.relay_card_back(&plans, fetch, behind, landed);
+                 let mut back: Vec<Declared> = Vec::new();
+                 for flight in &flights {
+@@ -9960,6 +10018,7 @@ impl Host {
+                     }
+                 }
+                 relay_hand_back(&back);
++                back_no_wait::landing_set(0);
+                 // Only now, and flight by flight: a range another flight
+                 // in the air declared too stays closed to refreshes.
+                 for flight in &flights {
+@@ -9984,7 +10043,7 @@ impl Host {
+                     fence_early::landed(flight.fence);
+                     ahead = Some(flight.fence);
+                     for &i in &flight.order {
+-                        read_backs(flight.lists[i].host());
++                        read_backs(flight.lists[i].host(), flight.number);
+                     }
+                     if let Some(card) = flight.card {
+                         self.card_done(card);
+@@ -10001,12 +10060,14 @@ impl Host {
+         if last > 0 {
+             FINISHED.store(last, Ordering::Release);
+             bury(last);
++            back_no_wait::prune();
+         }
+         self.log_messages();
+         fill_ahead::landing(0);
+         crate::early::landing(0, 0);
+         RELAY_STATS[4].fetch_add(landing.elapsed().as_micros() as u64, Ordering::Relaxed);
+         PATH[path::LAND].fetch_add(landing.elapsed().as_micros() as u64, Ordering::Relaxed);
++        let landing_back_gone: Vec<Declared>;
+         {
+             let mut line = line();
+             let Line {
+@@ -10020,11 +10081,14 @@ impl Host {
+                 in_hand,
+                 landing,
+                 read_back,
++                landing_back,
+                 ..
+             } = &mut *line;
+             kept.extend(landed);
+             in_hand.clear();
+             *landing = 0;
++            // (Dropped outside the lock, as the landed lists are.)
++            landing_back_gone = std::mem::take(landing_back);
+             // What is still in the air, from the flights that are.
+             written.clear();
+             read_back.clear();
+@@ -10053,6 +10117,7 @@ impl Host {
+             // by the helper thread (they take locks a waiter may hold).
+             *poke = true;
+         }
++        drop(landing_back_gone);
+         LINE_MOVED.notify_all();
+         LINE_LANDED.notify_all();
+     }
+@@ -10792,7 +10857,7 @@ impl Host {
+                     Late::Run(flight) => {
+                         last = flight.number;
+                         for &i in &flight.order {
+-                            read_backs(flight.lists[i].host());
++                            read_backs(flight.lists[i].host(), flight.number);
+                         }
+                         if let Some(card) = flight.card {
+                             self.card_done(card);
+@@ -10867,7 +10932,7 @@ impl Host {
+     /// needed ones: the rest of the wait was their landing).
+     fn relay_read_wait(&self, runs: &[&HostList]) {
+         use read_wait as w;
+-        let done = |line: &Line| blocked_by(&line.written, runs, false).is_none();
++        let done = |line: &Line| blocked_in(&line.written, runs, false, back_no_wait::on()).is_none();
+         // The host fence value of the last flight in the line that declared
+         // memory read (0: only flights being landed did, which the card has
+         // run; `u64::MAX`: a step of ours reads anywhere).
+@@ -11127,7 +11192,7 @@ impl Host {
+         let mut lists: Vec<Option<ID3D12CommandList>> = Vec::with_capacity(2 * runs.len());
+         // Where each run's lists start in `lists`.
+         let mut firsts = Vec::with_capacity(runs.len());
+-        let mut batch = Batch::default();
++        let mut batch = Batch { number: this_submission, ..Batch::default() };
+         // The time a settle of flights takes inside this preparing: the
+         // wait for the card and the copy-back have their own places on the
+         // frame line (run 92 showed them twice, "preparing" 250 ms for 135).
+@@ -11481,7 +11546,7 @@ impl Host {
+         for list in runs {
+             // Read backs first: a value written at the bottom of the pipe
+             // may be what tells the title that they are there.
+-            read_backs(list);
++            read_backs(list, this_submission);
+             for &(at, what, bytes) in &list.deferred().writes {
+                 what.write(at as *mut u8, bytes);
+             }
+@@ -13670,9 +13735,16 @@ impl HostList {
+                     let _reads_as = crate::backreads::reading_as(crate::backreads::TITLE_COPY, 0);
+                     // Timed from here: the flush above counts its own time.
+                     let since = std::time::Instant::now();
++                    // Into memory flights' shaders may write, not waited for
++                    // (`back_no_wait`): marked fresher than their landing.
++                    let fresher = if back_no_wait::on() { fresher_copy(batch, dst, len) } else { None };
+                     copy_mapped(dst as *mut u8, src as *const u8, len, true);
+                     // With the submission's one asking: the journal learns it.
+                     crate::watch::wrote(dst, len);
++                    if let Some(shadows) = fresher {
++                        let pushed: usize = shadows.iter().map(|shadow| shadow.fresher_push(dst, len)).sum();
++                        back_no_wait::pushed(pushed);
++                    }
+                     (len, since)
+                 }
+                 &Step::Fill(dst, src, len, _) if wide_fills() && batch.from_copy.is_empty() => {
+@@ -13994,6 +14066,70 @@ struct Batch {
+     /// submitting thread.
+     textures_due: Vec<std::sync::Arc<crate::texture::Staging>>,
+     tex_ns: u64,
++    /// The submission's number ([`started`]), for [`back_no_wait`]'s marks.
++    number: u64,
++    /// With [`back_no_wait::on`]: the flights' declared writes
++    /// (`Line::written`) as the first title copy found them. They only
++    /// shrink while the submission lock is held (flights land, none joins):
++    /// a copy clear of these is clear of the flights'.
++    fresh_written: Option<Vec<(usize, usize)>>,
++}
++
++/// [`back_no_wait`]: before a title copy into `[dst, dst + len)` runs at
++/// submission. If that touches what flights in the air (or being landed)
++/// declared their shaders write, its mark is set (the copy then waits only
++/// for a landing write under way) and the copies those flights hold the
++/// memory in are given, to take the copy's bytes once it ran
++/// (`Shadow::fresher_push`). `None`: clear of the flights, nothing to do.
++fn fresher_copy(batch: &mut Batch, dst: usize, len: usize) -> Option<Vec<std::sync::Arc<crate::shadow::Shadow>>> {
++    let end = dst.checked_add(len)?;
++    if len == 0 || batch.number == 0 {
++        return None;
++    }
++    let written = batch.fresh_written.get_or_insert_with(|| line().written.clone());
++    if !touches(written, dst, end) {
++        return None;
++    }
++    let mut shadows: Vec<std::sync::Arc<crate::shadow::Shadow>> = Vec::new();
++    {
++        let mut line = line();
++        if !touches(&line.written, dst, end) {
++            return None;
++        }
++        // Title memory in place is what the card writes: a flight still
++        // running could write it after the copy, and no landing would put
++        // that right. Such a copy waits, as before, but only until the card
++        // has run the flights that declared it there (they leave the line
++        // for the landing). Bounded: the landing takes nothing this thread
++        // holds, so the bound is only a guard.
++        let placed = |line: &Line| {
++            line.line.iter().any(|item| match item {
++                Late::Run(flight) => flight
++                    .back
++                    .iter()
++                    .any(|(shadow, ranges)| shadow.is_placed() && ranges.iter().any(|&(a, e)| a < end && e > dst)),
++                _ => false,
++            })
++        };
++        if placed(&line) {
++            back_no_wait::waited();
++            let waiting = std::time::Instant::now();
++            while placed(&line) && waiting.elapsed() < std::time::Duration::from_secs(1) {
++                line = LINE_LANDED.wait_timeout(line, std::time::Duration::from_millis(1)).unwrap_or_else(|e| e.into_inner()).0;
++            }
++        }
++        let flying = line.line.iter().filter_map(|item| match item {
++            Late::Run(flight) => Some(flight.back.iter()),
++            _ => None,
++        });
++        for (shadow, ranges) in flying.flatten().chain(line.landing_back.iter()) {
++            if ranges.iter().any(|&(a, e)| a < end && e > dst) && !shadows.iter().any(|s| std::sync::Arc::ptr_eq(s, shadow)) {
++                shadows.push(shadow.clone());
++            }
++        }
++    }
++    back_no_wait::ran(dst, end, batch.number);
++    Some(shadows)
+ }
+ 
+ /// Whether a submission's fills of upload memory (`Step::Fill`,
+diff --git a/crates/victory-gpu/src/host/back_no_wait.rs b/crates/victory-gpu/src/host/back_no_wait.rs
+new file mode 100644
+index 000000000..f713529ec
+--- /dev/null
++++ b/crates/victory-gpu/src/host/back_no_wait.rs
+@@ -0,0 +1,277 @@
++//! A title buffer copy into memory that flights' shaders may write, run
++//! without waiting for them (`VICTORY_BACK_NO_WAIT=1`; off by default:
++//! unset or `0` is the behaviour before it). LOCAL (daily-pr8).
++//!
++//! What it is for: a title buffer copy deferred into a list (`Step::Copy`)
++//! is run on the CPU when the list is submitted. If its source or its
++//! destination touches the ranges flights in the air declared their shaders
++//! write (`Line::written`), the submission waited until those flights had
++//! landed ([`super::Host::relay_read_wait`]): about 38 ms of the submitting
++//! thread a frame on the desktop, one such wait a frame. A copy whose
++//! source lies there and whose destination does not is not waited for
++//! anyway (`copy_ahead`); what was left are copies INTO such memory.
++//!
++//! Why such a copy need not wait: on the console it is a command of the
++//! submission's list, run after every earlier submission in queue order;
++//! its bytes are newer than whatever those flights' shaders wrote there.
++//! So with the switch a copy whose source is clear of flights' writes and
++//! whose destination touches them runs at once, and:
++//!
++//! 1. its destination is marked fresher than every flight numbered below
++//!    the submission it belongs to ([`ran`]): each landing path that writes
++//!    title memory for flights below the mark leaves the marked bytes alone
++//!    (`Shadow::relay_merge`, `Shadow::card_merge_relay` with the number of
++//!    the last flight of the landing, [`landing`]; the read-backs and
++//!    texture read-backs with their own flight's, `read_backs`). A landing
++//!    of flights some of which are not below the mark leaves nothing out:
++//!    the card's bytes there may be the later flight's own, which win;
++//! 2. the bytes it wrote are put at once into the host copies those flights
++//!    hold the memory in (`Shadow::fresher_push`): the copy's PC-side bytes
++//!    and its snapshot (the merge's reference), or the CPU side of a copy in
++//!    the card's memory, whose changed bytes go up ahead of the submission's
++//!    lists. The refresh leaves ranges shaders write alone, so without this
++//!    the submission's own shaders would read the old bytes there, and a
++//!    later merge would take the card's old bytes for a shader's write.
++//!
++//! A copy whose source touches flights' writes still waits exactly as
++//! before. The switch is taken only with the relay's second stage (the
++//! default) and copies in the card's memory with a CPU side (not
++//! `VICTORY_CARD_NO_PC_COPY=2`, whose mirror may not hold a piece).
++//!
++//! Order between a landing's write and the copy: a landing path looks at
++//! the marks and writes title memory inside a [`Writing`] window; the copy
++//! records its mark, then waits until no such window is open, then writes.
++//! Either the landing saw the mark, or the copy came after its write.
++
++use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
++use std::sync::{Mutex, OnceLock};
++
++/// Whether the switch is on and taken.
++pub(crate) fn on() -> bool {
++    static ON: OnceLock<bool> = OnceLock::new();
++    *ON.get_or_init(|| {
++        if !std::env::var_os("VICTORY_BACK_NO_WAIT").is_some_and(|v| v == "1") {
++            return false;
++        }
++        let taken = super::relay_exact() && !crate::shadow::no_pc_copy();
++        if taken {
++            tracing::info!(
++                "VICTORY_BACK_NO_WAIT=1: title copies into memory flights' shaders may write run at once, \
++                 their destination marked fresher than those flights' landing"
++            );
++        } else {
++            tracing::warn!(
++                "VICTORY_BACK_NO_WAIT=1 is not taken: it needs the relay's second stage (VICTORY_RELAY unset or 2, \
++                 flights sent ahead) and copies in the card's memory with a CPU side (not VICTORY_CARD_NO_PC_COPY=2)"
++            );
++        }
++        taken
++    })
++}
++
++/// A title copy's destination `[from, to)`, written by submission `number`
++/// at its preparing: newer than what flights numbered below it wrote there.
++struct Mark {
++    from: usize,
++    to: usize,
++    number: u64,
++}
++
++static MARKS: Mutex<Vec<Mark>> = Mutex::new(Vec::new());
++/// How many marks [`MARKS`] holds (the landing paths' look without a lock).
++static MARKS_N: AtomicUsize = AtomicUsize::new(0);
++/// Landing writes between their look at the marks and their store
++/// ([`Writing`]).
++static WRITERS: AtomicUsize = AtomicUsize::new(0);
++/// The number of the last flight of the landing under way (0: none): what
++/// the merges of a landing ([`skips`]) are below.
++static LANDING: AtomicU64 = AtomicU64::new(0);
++
++/// Since the last frame line: copies run at once, their bytes, the bytes
++/// put into copies flights hold, copies still waited for (source under
++/// writes), landing bytes left alone under marks, the stretches or rows
++/// that left some, microseconds the copies stood for landing writes.
++mod n {
++    pub(super) const RUN: usize = 0;
++    pub(super) const RUN_BYTES: usize = 1;
++    pub(super) const PUSHED: usize = 2;
++    pub(super) const WAITED: usize = 3;
++    pub(super) const SKIPPED: usize = 4;
++    pub(super) const SKIPS: usize = 5;
++    pub(super) const STOOD_US: usize = 6;
++    pub(super) const ALL: usize = 7;
++}
++static STATS: [AtomicU64; n::ALL] = [const { AtomicU64::new(0) }; n::ALL];
++
++fn marks() -> std::sync::MutexGuard<'static, Vec<Mark>> {
++    MARKS.lock().unwrap_or_else(|e| e.into_inner())
++}
++
++/// The landing thread lands flights up to number `last` (0: done).
++pub(super) fn landing_set(last: u64) {
++    if on() {
++        LANDING.store(last, Ordering::SeqCst);
++    }
++}
++
++/// The number of the last flight of the landing under way (0: none).
++pub(crate) fn landing() -> u64 {
++    LANDING.load(Ordering::SeqCst)
++}
++
++/// A copy still waited for because its source lies under flights' writes.
++pub(super) fn waited() {
++    STATS[n::WAITED].fetch_add(1, Ordering::Relaxed);
++}
++
++/// Marks no flight can still land under: every flight below them has.
++pub(super) fn prune() {
++    if MARKS_N.load(Ordering::SeqCst) == 0 {
++        return;
++    }
++    let finished = super::finished();
++    let mut marks = marks();
++    marks.retain(|m| finished.saturating_add(1) < m.number);
++    MARKS_N.store(marks.len(), Ordering::SeqCst);
++}
++
++/// Before submission `number`'s title copy into `[from, to)` writes title
++/// memory, which touches flights' declared writes: the mark is set, and the
++/// copy waits until no landing is between its look at the marks and its
++/// store (at most 50 ms; a landing does not wait for anything the
++/// submitting thread holds, so that bound is only a guard).
++pub(super) fn ran(from: usize, to: usize, number: u64) {
++    if from >= to {
++        return;
++    }
++    prune();
++    {
++        let mut marks = marks();
++        marks.push(Mark { from, to, number });
++        MARKS_N.store(marks.len(), Ordering::SeqCst);
++    }
++    STATS[n::RUN].fetch_add(1, Ordering::Relaxed);
++    STATS[n::RUN_BYTES].fetch_add((to - from) as u64, Ordering::Relaxed);
++    if WRITERS.load(Ordering::SeqCst) == 0 {
++        return;
++    }
++    let waiting = std::time::Instant::now();
++    while WRITERS.load(Ordering::SeqCst) != 0 {
++        if waiting.elapsed() >= std::time::Duration::from_millis(50) {
++            static ONCE: std::sync::Once = std::sync::Once::new();
++            ONCE.call_once(|| {
++                tracing::warn!("VICTORY_BACK_NO_WAIT: a title copy waited 50 ms for a landing write and went on")
++            });
++            break;
++        }
++        std::thread::yield_now();
++    }
++    STATS[n::STOOD_US].fetch_add(waiting.elapsed().as_micros() as u64, Ordering::Relaxed);
++}
++
++/// Bytes of a copy flights hold put in with the title copy's.
++pub(super) fn pushed(bytes: usize) {
++    STATS[n::PUSHED].fetch_add(bytes as u64, Ordering::Relaxed);
++}
++
++/// A landing path between its look at the marks and its store of title
++/// memory ([`skips`]); a title copy that set a mark meanwhile waits until it
++/// is dropped.
++pub(crate) struct Writing(bool);
++
++impl Drop for Writing {
++    fn drop(&mut self) {
++        if self.0 {
++            WRITERS.fetch_sub(1, Ordering::SeqCst);
++        }
++    }
++}
++
++/// For a landing path about to write title memory `[from, to)` for flights
++/// numbered up to `landed` (0: not known, nothing left out): the parts
++/// (in order, joined) under marks of later submissions, which it must
++/// leave alone, and the window to hold until its store is done.
++pub(crate) fn skips(from: usize, to: usize, landed: u64) -> (Writing, Vec<(usize, usize)>) {
++    if !on() {
++        return (Writing(false), Vec::new());
++    }
++    WRITERS.fetch_add(1, Ordering::SeqCst);
++    let writing = Writing(true);
++    if landed == 0 || from >= to || MARKS_N.load(Ordering::SeqCst) == 0 {
++        return (writing, Vec::new());
++    }
++    let parts: Vec<(usize, usize)> = marks()
++        .iter()
++        .filter(|m| m.number > landed && m.from < to && m.to > from)
++        .map(|m| (m.from.max(from), m.to.min(to)))
++        .collect();
++    (writing, joined(parts))
++}
++
++/// `parts` in order, joined where they overlap or touch.
++pub(crate) fn joined(mut parts: Vec<(usize, usize)>) -> Vec<(usize, usize)> {
++    parts.retain(|p| p.0 < p.1);
++    parts.sort_unstable();
++    let mut out: Vec<(usize, usize)> = Vec::with_capacity(parts.len());
++    for (a, b) in parts {
++        match out.last_mut() {
++            Some(last) if a <= last.1 => last.1 = last.1.max(b),
++            _ => out.push((a, b)),
++        }
++    }
++    out
++}
++
++/// A landing left the bytes of `marked` (title addresses) alone in a
++/// stretch at title address `base`: counted where the card's bytes `now`
++/// differed from the reference `held` (what it would have written).
++pub(crate) fn skipped_where(base: usize, now: &[u8], held: &[u8], marked: &[(usize, usize)]) {
++    let mut bytes = 0u64;
++    for &(a, b) in marked {
++        let (a, b) = (a.saturating_sub(base).min(now.len()), b.saturating_sub(base).min(now.len()));
++        bytes += now[a..b].iter().zip(&held[a..b]).filter(|(x, y)| x != y).count() as u64;
++    }
++    skipped(bytes);
++}
++
++/// A landing left `bytes` of title memory alone under marks.
++pub(crate) fn skipped(bytes: u64) {
++    STATS[n::SKIPPED].fetch_add(bytes, Ordering::Relaxed);
++    STATS[n::SKIPS].fetch_add(1, Ordering::Relaxed);
++}
++
++/// The frame line's part, with the switch on.
++pub(super) fn line(frames: f64) {
++    if !on() {
++        return;
++    }
++    prune();
++    let s: Vec<f64> = STATS.iter().map(|s| s.swap(0, Ordering::Relaxed) as f64 / frames).collect();
++    tracing::info!(
++        "title copies under flights' writes per frame (VICTORY_BACK_NO_WAIT=1): {:.2} run at once with their destination \
++         marked fresher ({:.1} KB, {:.1} KB of it put into the copies flights hold), {:.2} still waited for (source under \
++         writes), {:.1} landing bytes skipped under marks ({:.2} stretches or rows), {:.2} ms standing for landing writes, \
++         {} marks held",
++        s[n::RUN],
++        s[n::RUN_BYTES] / 1024.0,
++        s[n::PUSHED] / 1024.0,
++        s[n::WAITED],
++        s[n::SKIPPED],
++        s[n::SKIPS],
++        s[n::STOOD_US] / 1000.0,
++        MARKS_N.load(Ordering::Relaxed),
++    );
++}
++
++#[cfg(test)]
++mod tests {
++    use super::joined;
++
++    #[test]
++    fn marks_join_and_leave_the_rest() {
++        assert_eq!(joined(vec![(30, 40), (10, 20), (15, 25), (25, 26), (50, 50)]), vec![(10, 26), (30, 40)]);
++        // What a landing then writes: the stretch without them.
++        assert_eq!(crate::shadow::outside(0, 45, joined(vec![(10, 20), (30, 50)])), vec![(0, 10), (20, 30)]);
++        assert_eq!(crate::shadow::outside(12, 18, joined(vec![(10, 20)])), Vec::<(usize, usize)>::new());
++    }
++}
+diff --git a/crates/victory-gpu/src/shadow.rs b/crates/victory-gpu/src/shadow.rs
+index 4a3e5ee7a..06b2e8899 100644
+--- a/crates/victory-gpu/src/shadow.rs
++++ b/crates/victory-gpu/src/shadow.rs
+@@ -5215,6 +5215,12 @@ impl Shadow {
+         let last = last_difference(now, held).unwrap_or(first);
+         let (at, n) = (at + first, last + 1 - first);
+         let (now, held) = (&now[first..=last], &mut held[first..=last]);
++        // Bytes a later submission's title copy wrote (`VICTORY_BACK_NO_WAIT`):
++        // left alone, in title memory and in the snapshot, until a landing
++        // of flights not all below its mark. Looked at from here until the
++        // store ([`crate::host::back_no_wait::Writing`]).
++        let (_writing, marked) =
++            crate::host::back_no_wait::skips(start + at, start + at + n, crate::host::back_no_wait::landing());
+         title.clear();
+         title.resize(n, 0);
+         // Who touched the page since its last store is looked at before our
+@@ -5231,6 +5237,19 @@ impl Shadow {
+         // The stretch as read: what the card did not change is the
+         // title's, and may have been written again since.
+         let as_read = merge_race_on().then(|| title.clone());
++        if !marked.is_empty() {
++            crate::host::back_no_wait::skipped_where(start + at, now, held, &marked);
++            let mut changed = false;
++            for (a, b) in outside(start + at, start + at + n, marked.clone()) {
++                let (a, b) = (a - start - at, b - start - at);
++                changed |= merge_piece(&now[a..b], &mut held[a..b], &mut title[a..b]);
++            }
++            if !changed {
++                return 0;
++            }
++            count_skinned(skinned::MERGED, (start + at) as u64, (start + at + title.len()) as u64);
++            return self.put_back_outside(start + at, &title[..], &marked, as_read.as_deref(), "pc relay");
++        }
+         if !merge_piece(now, held, title) {
+             return 0;
+         }
+@@ -6857,7 +6876,12 @@ impl Shadow {
+         let last = last_difference(gpu, held).unwrap_or(first);
+         let (at, n) = (at + first, last + 1 - first);
+         let (gpu, held) = (&gpu[first..=last], &mut held[first..=last]);
+-        let skip: Vec<(usize, usize)> = {
++        // Bytes a later submission's title copy wrote (`VICTORY_BACK_NO_WAIT`),
++        // as in [`Shadow::relay_merge`]: left out with the others below, and
++        // not stored back.
++        let (_writing, marked) =
++            crate::host::back_no_wait::skips(start + at, start + at + n, crate::host::back_no_wait::landing());
++        let mut skip: Vec<(usize, usize)> = {
+             let dirty = card.dirty.lock().unwrap_or_else(|e| e.into_inner());
+             let sent = card.sent.lock().unwrap_or_else(|e| e.into_inner());
+             dirty
+@@ -6867,6 +6891,10 @@ impl Shadow {
+                 .filter(|&(a, b)| a < at + n && b > at)
+                 .collect()
+         };
++        if !marked.is_empty() {
++            crate::host::back_no_wait::skipped_where(start + at, gpu, held, &marked);
++            skip.extend(marked.iter().map(|&(a, b)| (a - start, b - start)));
++        }
+         title.clear();
+         title.resize(n, 0);
+         // Who touched the page since its last store is looked at before our
+@@ -6890,6 +6918,9 @@ impl Shadow {
+             return 0;
+         }
+         count_skinned(skinned::MERGED, (start + at) as u64, (start + at + title.len()) as u64);
++        if !marked.is_empty() {
++            return self.put_back_outside(start + at, &title[..], &marked, as_read.as_deref(), "card relay");
++        }
+         crate::host::shaders_write(start + at, &title[..]);
+         if self.put_back_quiet(start + at, &title[..]) {
+             return n;
+@@ -6906,6 +6937,116 @@ impl Shadow {
+         crate::backreads::stored(self.id, (self.start, self.len), start + at, n, false);
+         n
+     }
++
++    /// A relay merge's write-back of the stretch `title` (at title address
++    /// `address`, inside one 64 KiB page) with the parts `marked` (title
++    /// addresses, in order) left out: bytes a later submission's title copy
++    /// wrote (`crate::host::back_no_wait`), which neither the card's bytes
++    /// nor the title's as read before that copy may go over. Each part
++    /// around them is stored as the whole stretch is otherwise. `as_read`:
++    /// the stretch as first read ([`merge_race`]). Returns the bytes stored.
++    fn put_back_outside(
++        &self,
++        address: usize,
++        title: &[u8],
++        marked: &[(usize, usize)],
++        as_read: Option<&[u8]>,
++        which: &'static str,
++    ) -> usize {
++        let mut stored = 0;
++        for (a, b) in outside(address, address + title.len(), marked.to_vec()) {
++            let bytes = &title[a - address..b - address];
++            crate::host::shaders_write(a, bytes);
++            stored += b - a;
++            if self.put_back_own(a, bytes) {
++                #[cfg(feature = "diagnostics")]
++                crate::backreads::stored(self.id, (self.start, self.len), a, b - a, true);
++                continue;
++            }
++            crate::watch::writing_exact(a, b - a);
++            merge_race(as_read.map(|r| &r[a - address..b - address]), (self.start, self.len), a, bytes, which);
++            crate::host::write_mapped(a as *mut u8, bytes.as_ptr(), b - a);
++            #[cfg(feature = "diagnostics")]
++            crate::backreads::stored(self.id, (self.start, self.len), a, b - a, false);
++        }
++        stored
++    }
++
++    /// `crate::host::back_no_wait`: a title copy just wrote title memory
++    /// `[address, address + len)` at submission, and flights in the air (or
++    /// being landed) declared shader writes over some of it in this copy.
++    /// Those parts (the copy's ranges shaders may be writing) take title
++    /// memory's bytes now, every byte of them: into the PC-side copy and
++    /// its snapshot (so the merge after the card ran finds only what the
++    /// card writes from now on), or into the CPU side of a copy in the
++    /// card's memory, whose changed bytes go up ahead of the submission's
++    /// lists (after the earlier flights, in queue order; the relay's merge
++    /// leaves such bytes out until a fetch after that send). The refresh
++    /// leaves those ranges alone, so the submission's shaders would
++    /// otherwise read the copy's old bytes there. Under the snapshot's lock,
++    /// as [`Shadow::merge_under_writes`]. Returns the bytes put in.
++    ///
++    /// A flight still running may write such a byte after it was put in:
++    /// that byte is then the card's in the copy; its own landing leaves the
++    /// title's byte in title memory (the mark), and the next landing of a
++    /// flight not below the mark takes the card's, as the merge under
++    /// writes would have.
++    pub(crate) fn fresher_push(&self, address: usize, len: usize) -> usize {
++        if self.place.is_some() {
++            return 0;
++        }
++        let (start, end) = (self.start as usize, (self.start + self.len) as usize);
++        let (from, to) = (address.max(start), address.saturating_add(len).min(end));
++        if from >= to {
++            return 0;
++        }
++        let busy: Vec<(usize, usize)> = self
++            .pending
++            .lock()
++            .unwrap_or_else(|e| e.into_inner())
++            .iter()
++            .filter(|&&(a, e)| a < to && e > from)
++            .map(|&(a, e)| (a.max(from), e.min(to)))
++            .collect();
++        let mut title = Vec::new();
++        let mut pushed = 0;
++        for (a, e) in crate::host::back_no_wait::joined(busy) {
++            let (at, n) = (a - start, e - a);
++            title.clear();
++            title.resize(n, 0);
++            let mut before = self.before.lock().unwrap_or_else(|e| e.into_inner());
++            if !crate::host::read_into(a as *const u8, &mut title) {
++                continue;
++            }
++            if self.card.is_some() {
++                // A mirror's piece not held: nothing to put it into (not
++                // with the switch, which needs a CPU side).
++                if !self.held(at, at + n) {
++                    continue;
++                }
++                // SAFETY: inside the mapping of the copy's CPU side, which
++                // only the submitting thread writes (and the merges, under
++                // the lock held here).
++                unsafe { std::ptr::copy_nonoverlapping(title.as_ptr(), self.data.add(at), n) };
++                self.card_changed(at, at + n);
++            } else {
++                // SAFETY: inside the copy's mapping. The card may be
++                // writing the copy beside these bytes; these are written
++                // here and nothing around them.
++                unsafe { std::ptr::copy_nonoverlapping(title.as_ptr(), self.data.add(at), n) };
++                if let Some(snapshot) = before.as_mut() {
++                    // SAFETY: the snapshot's allocation holds the copy's
++                    // bytes at the copy's offsets (`writing`), and these
++                    // are in a declared range.
++                    let held = unsafe { std::slice::from_raw_parts_mut(snapshot.as_mut_ptr().add(at), n) };
++                    held.copy_from_slice(&title);
++                }
++            }
++            drop(before);
++            pushed += n;
++        }
++        pushed
++    }
+ }
+ 
+ struct Entry {
+diff --git a/crates/victory-gpu/src/texback.rs b/crates/victory-gpu/src/texback.rs
+index ccf462425..abd755aef 100644
+--- a/crates/victory-gpu/src/texback.rs
++++ b/crates/victory-gpu/src/texback.rs
+@@ -202,7 +202,9 @@ pub(crate) fn record(list: &ID3D12GraphicsCommandList, target: Target) -> Option
+ }
+ 
+ /// Once the list has run, tile its texels back into the same title allocation.
+-pub(crate) fn land(back: &Back) {
++/// `number` is the submission the list ran in: bytes under marks of later
++/// submissions' title copies (`crate::host::back_no_wait`) are left alone.
++pub(crate) fn land(back: &Back, number: u64) {
+     static COPIED: AtomicU64 = AtomicU64::new(0);
+     static STALE: AtomicU64 = AtomicU64::new(0);
+     let _mapping = crate::watch::title_memory_reading();
+@@ -245,7 +247,17 @@ pub(crate) fn land(back: &Back) {
+     }
+     // SAFETY: mapped above.
+     unsafe { back.buffer.Unmap(0, None) };
+-    crate::host::copy_mapped(at as *mut u8, tiled.as_ptr(), size, true);
++    let (_writing, marked) = crate::host::back_no_wait::skips(at, end, number);
++    if marked.is_empty() {
++        crate::host::copy_mapped(at as *mut u8, tiled.as_ptr(), size, true);
++    } else {
++        let parts = crate::shadow::outside(at, end, marked);
++        let kept: usize = parts.iter().map(|&(a, b)| b - a).sum();
++        crate::host::back_no_wait::skipped((size - kept) as u64);
++        for (a, b) in parts {
++            crate::host::copy_mapped(a as *mut u8, tiled[a - at..].as_ptr(), b - a, true);
++        }
++    }
+     let copied = COPIED.fetch_add(1, Ordering::Relaxed) + 1;
+     if copied == 1 || copied.is_multiple_of(128) {
+         tracing::info!(copied, bytes = size, "texture readback landed");

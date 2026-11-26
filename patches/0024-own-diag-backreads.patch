@@ -1,0 +1,28 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Octo <180629317+OctoAlgo@users.noreply.github.com>
+Date: Wed, 25 Nov 2026 22:31:55 +0100
+Subject: [PATCH 24/39] backreads' page stamp reads #995's Written map
+ (diagnostics build)
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_011dFkrUVYjMaeV1b3VJ4JEb
+
+Kit-Source: own (diagnostics build only)
+Kit-Licence: GPL-3.0
+---
+ crates/victory-gpu/src/watch.rs | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/crates/victory-gpu/src/watch.rs b/crates/victory-gpu/src/watch.rs
+index 450fe6c88..fc0e13fd6 100644
+--- a/crates/victory-gpu/src/watch.rs
++++ b/crates/victory-gpu/src/watch.rs
+@@ -933,7 +933,7 @@ pub(crate) fn wrote_own(page: usize, others: &[usize]) -> (u64, u64) {
+ /// never). Read only, for `crate::backreads`.
+ #[cfg(feature = "diagnostics")]
+ pub(crate) fn stamp(page: usize) -> u64 {
+-    JOURNAL.lock().unwrap_or_else(|e| e.into_inner()).written.get(&page).copied().unwrap_or(0)
++    JOURNAL.lock().unwrap_or_else(|e| e.into_inner()).written.pages.get(&page).copied().unwrap_or(0)
+ }
+ 
+ /// One kernel asking for `pieces` (page ranges in order); by halves if it

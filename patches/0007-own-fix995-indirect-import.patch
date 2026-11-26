@@ -1,0 +1,27 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Octo <180629317+OctoAlgo@users.noreply.github.com>
+Date: Wed, 25 Nov 2026 18:04:56 +0100
+Subject: [PATCH 07/39] indirect.rs needs windows::core::s after the merge
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_011dFkrUVYjMaeV1b3VJ4JEb
+
+Kit-Source: own (build fix after #995)
+Kit-Licence: GPL-3.0
+---
+ crates/victory-gpu/src/indirect.rs | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/crates/victory-gpu/src/indirect.rs b/crates/victory-gpu/src/indirect.rs
+index b0ae32eb8..f9a0c5878 100644
+--- a/crates/victory-gpu/src/indirect.rs
++++ b/crates/victory-gpu/src/indirect.rs
+@@ -32,6 +32,8 @@
+ 
+ use windows::Win32::Graphics::Direct3D12::*;
+ 
++use windows::core::s;
++
+ use crate::dxc::compile;
+ use crate::host::{HostList, host, transition};
+ 

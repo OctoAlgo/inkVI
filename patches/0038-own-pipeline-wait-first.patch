@@ -1,0 +1,63 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Octo <180629317+OctoAlgo@users.noreply.github.com>
+Date: Thu, 26 Nov 2026 13:36:56 +0100
+Subject: [PATCH 38/39] the first-draw wait for every pipeline, renamed
+ VICTORY_PIPELINE_WAIT_FIRST_MS
+
+r9b2 (empty pipeline cache: no early list) rendered the dark cell too, so the
+wait no longer depends on the early list being queued.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+Kit-Source: own (dark-cell fix: VICTORY_PIPELINE_WAIT_FIRST_MS)
+Kit-Licence: GPL-3.0
+---
+ crates/victory-gpu/src/pipeline/make.rs | 16 +++++++++-------
+ 1 file changed, 9 insertions(+), 7 deletions(-)
+
+diff --git a/crates/victory-gpu/src/pipeline/make.rs b/crates/victory-gpu/src/pipeline/make.rs
+index 61bd1297e..d7a2a737c 100644
+--- a/crates/victory-gpu/src/pipeline/make.rs
++++ b/crates/victory-gpu/src/pipeline/make.rs
+@@ -178,7 +178,7 @@ pub(crate) fn ready(p: &Arc<Pending>) -> Option<&HostPipeline> {
+     if p.made.get().is_none() {
+         start(p, REQUESTED);
+         let early = early_wait();
+-        if first && !early.is_zero() && EARLY_LEFT.load(Ordering::Relaxed) > 0 {
++        if first && !early.is_zero() {
+             wait_once(p, early);
+         } else {
+             wait(p, crate::frame::current());
+@@ -196,24 +196,26 @@ pub(crate) fn ready(p: &Arc<Pending>) -> Option<&HostPipeline> {
+     made
+ }
+ 
+-/// `VICTORY_PIPELINE_WAIT_EARLY_MS=<ms>` (off unless set): while pipelines
+-/// listed for an early start are still queued, a draw or dispatch that is
+-/// the first to ask for a pipeline not made yet waits for it up to <ms>
+-/// (once per pipeline, outside the frame's budget) instead of being dropped.
++/// `VICTORY_PIPELINE_WAIT_FIRST_MS=<ms>` (off unless set): a draw or
++/// dispatch that is the first to ask for a pipeline not made yet waits for
++/// it up to <ms> (once per pipeline, outside the frame's budget) instead of
++/// being dropped. With warm caches every pipeline is made before its first
++/// draw and nothing waits.
+ /// Round 9b's dark cell: when the host pipelines are not in the driver's
+ /// shader cache (a new build's first run; the 1 GB NVIDIA cache cleaned
+ /// up), each early pipeline takes the driver 1-5 s, the queue needs
+ /// minutes, the world starts meanwhile and its first passes go out without
+ /// their pipelines (`VICTORY_PIPELINE_WAIT_MS=0`): the cell stays dark.
++/// The same with no early list at all (an empty pipeline cache, r9b2).
+ fn early_wait() -> Duration {
+     static MS: OnceLock<Duration> = OnceLock::new();
+     *MS.get_or_init(|| {
+-        let ms = std::env::var("VICTORY_PIPELINE_WAIT_EARLY_MS")
++        let ms = std::env::var("VICTORY_PIPELINE_WAIT_FIRST_MS")
+             .ok()
+             .and_then(|v| v.trim().parse::<u64>().ok())
+             .unwrap_or(0);
+         if ms > 0 {
+-            tracing::info!(ms, "a pipeline's first draw waits for it while early pipelines are queued");
++            tracing::info!(ms, "a pipeline's first draw waits for it (VICTORY_PIPELINE_WAIT_FIRST_MS)");
+         }
+         Duration::from_millis(ms)
+     })

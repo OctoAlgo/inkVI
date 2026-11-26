@@ -1,0 +1,159 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Octo <180629317+OctoAlgo@users.noreply.github.com>
+Date: Thu, 26 Nov 2026 13:21:11 +0100
+Subject: [PATCH 36/39] pipeline workers' watch line +
+ VICTORY_PIPELINE_PRIORITY=normal (dark-cell hunt)
+
+Every 2 s while pipelines are queued: queue lengths, made/loaded/started_early,
+what each worker does and for how long, the library calls running
+(VICTORY_PIPELINE_WATCH=0: off). VICTORY_PIPELINE_PRIORITY=normal: workers at
+the title's priority instead of below it.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+Kit-Source: own (diagnostics + VICTORY_PIPELINE_PRIORITY)
+Kit-Licence: GPL-3.0
+---
+ crates/victory-gpu/src/pipeline/library.rs | 15 ++++
+ crates/victory-gpu/src/pipeline/make.rs    | 88 ++++++++++++++++++++--
+ 2 files changed, 97 insertions(+), 6 deletions(-)
+
+diff --git a/crates/victory-gpu/src/pipeline/library.rs b/crates/victory-gpu/src/pipeline/library.rs
+index 8806c2f14..768184855 100644
+--- a/crates/victory-gpu/src/pipeline/library.rs
++++ b/crates/victory-gpu/src/pipeline/library.rs
+@@ -270,6 +270,21 @@ fn call(what: &'static str, name: &str) -> Call {
+     Call(thread, since)
+ }
+ 
++/// The library calls running now, for the workers' watch line: thread,
++/// what, for how long, the pipeline (shortened).
++pub(crate) fn calls_now() -> String {
++    let now = crate::host::now_us();
++    let calls = CALLS.lock().unwrap_or_else(|e| e.into_inner());
++    calls
++        .iter()
++        .map(|(t, what, name, since)| {
++            let short: String = name.chars().take(60).collect();
++            format!("[{t} {what} {}ms {short}]", now.saturating_sub(*since) / 1000)
++        })
++        .collect::<Vec<_>>()
++        .join(" ")
++}
++
+ impl Drop for Call {
+     fn drop(&mut self) {
+         CALLS
+diff --git a/crates/victory-gpu/src/pipeline/make.rs b/crates/victory-gpu/src/pipeline/make.rs
+index 6b6f1796c..b00e76db9 100644
+--- a/crates/victory-gpu/src/pipeline/make.rs
++++ b/crates/victory-gpu/src/pipeline/make.rs
+@@ -417,15 +417,24 @@ fn workers() -> bool {
+         for i in 0..workers {
+             let spawned = std::thread::Builder::new()
+                 .name(format!("victory-pipelines-{i}"))
+-                .spawn(|| {
+-                    // Below the title's own threads (loading, recording).
++                .spawn(move || {
++                    // Below the title's own threads (loading, recording),
++                    // unless `VICTORY_PIPELINE_PRIORITY=normal`.
+                     // SAFETY: a plain call on our own thread.
+-                    unsafe {
+-                        use windows::Win32::System::Threading::*;
+-                        let _ = SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
++                    if !normal_priority() {
++                        unsafe {
++                            use windows::Win32::System::Threading::*;
++                            let _ = SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
++                        }
+                     }
++                    let slot = i.min(STATE.len() - 1);
++                    TID[slot].store(crate::host::thread_id() as u64, Ordering::Relaxed);
+                     loop {
+-                        next().make();
++                        mark(slot, 0);
++                        let p = next();
++                        mark(slot, 1);
++                        p.make();
++                        mark(slot, 2);
+                         if WAITING.fetch_sub(1, Ordering::Relaxed) == 1 {
+                             drained();
+                         } else {
+@@ -439,10 +448,77 @@ fn workers() -> bool {
+                 running = true;
+             }
+         }
++        if running {
++            watch();
++        }
+         running
+     })
+ }
+ 
++/// `VICTORY_PIPELINE_PRIORITY=normal`: the workers run at the title's
++/// priority instead of below it (round 9b: the dark-cell runs' early
++/// pipelines were made minutes late, while the title was loading).
++fn normal_priority() -> bool {
++    static ON: OnceLock<bool> = OnceLock::new();
++    *ON.get_or_init(|| std::env::var("VICTORY_PIPELINE_PRIORITY").is_ok_and(|v| v == "normal"))
++}
++
++/// Per worker: what it does (0 waiting for work, 1 making, 2 saving) in
++/// the top byte, since when (`crate::host::now_ms`) below; its thread id.
++static STATE: [AtomicU64; 8] = [const { AtomicU64::new(0) }; 8];
++static TID: [AtomicU64; 8] = [const { AtomicU64::new(0) }; 8];
++
++fn mark(slot: usize, what: u64) {
++    STATE[slot].store(what << 56 | (crate::host::now_ms() & ((1 << 56) - 1)), Ordering::Relaxed);
++}
++
++/// Every 2 s while pipelines are queued (`VICTORY_PIPELINE_WATCH=0`: never;
++/// at most 300 lines): the queue, the counts and what each worker does and
++/// for how long, with the library calls running (round 9b dark-cell hunt).
++fn watch() {
++    if std::env::var("VICTORY_PIPELINE_WATCH").is_ok_and(|v| v == "0") {
++        return;
++    }
++    let _ = std::thread::Builder::new().name("victory-pipelines-watch".into()).spawn(|| {
++        use super::library::{EARLY, LOADED, MADE};
++        let mut lines = 0;
++        while lines < 300 {
++            std::thread::sleep(Duration::from_secs(2));
++            let waiting = WAITING.load(Ordering::Relaxed);
++            if waiting == 0 {
++                continue;
++            }
++            lines += 1;
++            let (early, requested) = {
++                let q = QUEUE.lock().unwrap_or_else(|e| e.into_inner());
++                (q.early.len(), q.requested.len())
++            };
++            let now = crate::host::now_ms();
++            let workers: Vec<String> = STATE
++                .iter()
++                .zip(&TID)
++                .filter(|(_, t)| t.load(Ordering::Relaxed) != 0)
++                .map(|(s, t)| {
++                    let s = s.load(Ordering::Relaxed);
++                    let what = ["idle", "making", "saving"].get((s >> 56) as usize).copied().unwrap_or("?");
++                    format!("{}:{what}:{}ms", t.load(Ordering::Relaxed), now.saturating_sub(s & ((1 << 56) - 1)))
++                })
++                .collect();
++            tracing::info!(
++                waiting,
++                early,
++                requested,
++                made = MADE.load(Ordering::Relaxed),
++                loaded = LOADED.load(Ordering::Relaxed),
++                started_early = EARLY.load(Ordering::Relaxed),
++                workers = %workers.join(" "),
++                calls = %super::library::calls_now(),
++                "pipeline workers"
++            );
++        }
++    });
++}
++
+ /// The most pipelines waiting at once since the workers last ran out.
+ static PEAK: AtomicU64 = AtomicU64::new(0);
+ 

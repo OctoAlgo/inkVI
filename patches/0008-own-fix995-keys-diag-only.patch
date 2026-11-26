@@ -1,0 +1,27 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Octo <180629317+OctoAlgo@users.noreply.github.com>
+Date: Wed, 25 Nov 2026 18:06:20 +0100
+Subject: [PATCH 08/39] the keys file is read in diagnostics builds only
+ (release build after the #995 merge)
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_011dFkrUVYjMaeV1b3VJ4JEb
+
+Kit-Source: own (build fix after #995)
+Kit-Licence: GPL-3.0
+---
+ crates/victory-hle/src/modules/gameinput.rs | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/crates/victory-hle/src/modules/gameinput.rs b/crates/victory-hle/src/modules/gameinput.rs
+index 85c4f2262..c8c556589 100644
+--- a/crates/victory-hle/src/modules/gameinput.rs
++++ b/crates/victory-hle/src/modules/gameinput.rs
+@@ -1260,6 +1260,7 @@ mod host {
+             .filter(|&&(at, _)| (at..at + *HOLD).contains(&now))
+             .map(|&(_, vk)| vk)
+             .collect();
++        #[cfg(feature = "diagnostics")]
+         down.extend(from_file());
+         down
+     }

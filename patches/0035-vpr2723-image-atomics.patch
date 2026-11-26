@@ -1,0 +1,34 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Octo <180629317+OctoAlgo@users.noreply.github.com>
+Date: Thu, 26 Nov 2026 09:08:38 +0100
+Subject: [PATCH 35/39] VIctory #2723: image atomics name a U32 element in the
+ handle annotation (d678bc26a; the handle key by element type, cb3162362, is
+ already ours). Its test (b7300eb5b) not ported: conflicts with our shader.rs.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+Kit-Source: Marvisak/VIctory #2723, ported by Octo
+Kit-Licence: GPL-3.0
+---
+ crates/victory-shader/src/emit/lower.rs | 8 +++++++-
+ 1 file changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/crates/victory-shader/src/emit/lower.rs b/crates/victory-shader/src/emit/lower.rs
+index 3f2146532..07e5db91d 100644
+--- a/crates/victory-shader/src/emit/lower.rs
++++ b/crates/victory-shader/src/emit/lower.rs
+@@ -9711,7 +9711,13 @@ impl<'a> Lower<'a> {
+             || self
+                 .used_kind(src)
+                 .is_some_and(|u| u.kind == ResourceType::Uav);
+-        let props = (kind | if uav { 0x1000 } else { 0 }, 0x409);
++        let atomic = name.starts_with("image_atomic_");
++        // A typed view's element: four F32 (9) components, or for atomics one
++        // U32 (5), which they need: a host that takes the element type from
++        // the annotation (vkd3d-proton) otherwise makes float atomics
++        // (VIctory #2723, d678bc26a; the key by element is already ours).
++        let element = if atomic { 0x105 } else { 0x409 };
++        let props = (kind | if uav || atomic { 0x1000 } else { 0 }, element);
+         if let Some(op) = name.strip_prefix("image_atomic_") {
+             // GLC returns the old value. DXIL implements subtraction by adding
+             // the two's complement of the operand at the same width.

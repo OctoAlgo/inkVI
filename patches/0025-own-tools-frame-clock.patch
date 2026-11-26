@@ -1,0 +1,273 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Octo <180629317+OctoAlgo@users.noreply.github.com>
+Date: Wed, 25 Nov 2026 22:56:15 +0100
+Subject: [PATCH 25/39] world-frame clock for short repeatable runs
+
+VICTORY_MARKS / VICTORY_WINDOW / VICTORY_EXIT_AFTER_WINDOW / VICTORY_TOUCH_AT (victory_gpu::iterate),
+frame-keyed scripted keys w<N>[-<M>]:<key> and f<N>[-<M>]:<key> (VICTORY_KEYS_HOLD_FRAMES).
+World frame 0 = the first present after 500+ host draws (the VICTORY_SHOT_AT rule).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_011dFkrUVYjMaeV1b3VJ4JEb
+
+Kit-Source: own (run tooling, opt-in)
+Kit-Licence: GPL-3.0
+---
+ crates/victory-gpu/src/iterate.rs           | 130 ++++++++++++++++++++
+ crates/victory-gpu/src/lib.rs               |   4 +-
+ crates/victory-gpu/src/queue.rs             |   3 +
+ crates/victory-hle/src/modules/gameinput.rs |  53 +++++++-
+ 4 files changed, 182 insertions(+), 8 deletions(-)
+ create mode 100644 crates/victory-gpu/src/iterate.rs
+
+diff --git a/crates/victory-gpu/src/iterate.rs b/crates/victory-gpu/src/iterate.rs
+new file mode 100644
+index 000000000..0a007605e
+--- /dev/null
++++ b/crates/victory-gpu/src/iterate.rs
+@@ -0,0 +1,130 @@
++//! LOCAL (tools-iter, never pushed): a world-frame clock for short,
++//! repeatable test runs.
++//!
++//! World frame 0 is the first present after which 500 or more draws ran on
++//! the host since the present before it: the rule `VICTORY_SHOT_AT` counts
++//! from, so shot numbers and key frames use the same clock. Below 15 fps the
++//! title's step is clamped to 1/15 s, so a world frame number names the same
++//! moment of game time in every run, whatever the frame rate.
++//!
++//! * [`world_frame`]: world frames presented so far (for frame-keyed
++//!   `VICTORY_KEYS` entries, `w<N>[-<M>]:<key>`).
++//! * `VICTORY_MARKS=<n>`: an info line every `n` world frames with the
++//!   seconds since world frame 0 (`tools/iter/wfps.py` reads them).
++//! * `VICTORY_WINDOW=<a>-<b>`: at world frame `b` a line with the window's
++//!   frames, seconds and fps; with `VICTORY_EXIT_AFTER_WINDOW=1` the process
++//!   then ends (exit code 0), so a run lasts only as long as it must.
++//! * `VICTORY_TOUCH_AT=<w>,<w>...` with `VICTORY_TOUCH_FILE=<path>`: at
++//!   each of those world frames the file is written (`1`): an outside tool
++//!   waiting for it acts on a known frame (RenderDoc's trigger file, rdhook).
++
++use std::sync::OnceLock;
++use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
++use std::time::Instant;
++
++/// The present number of world frame 0 (`u64::MAX` before it).
++static WORLD: AtomicU64 = AtomicU64::new(u64::MAX);
++/// The present number of the last present.
++static LAST: AtomicU64 = AtomicU64::new(0);
++
++/// Presents so far (frame-keyed `f<N>` keys).
++pub fn presents() -> u64 {
++    LAST.load(Relaxed)
++}
++
++/// World frames presented so far, once the world has begun.
++pub fn world_frame() -> Option<u64> {
++    let world = WORLD.load(Relaxed);
++    (world != u64::MAX).then(|| LAST.load(Relaxed).saturating_sub(world))
++}
++
++struct Setup {
++    touch: Vec<u64>,
++    touch_file: Option<std::path::PathBuf>,
++    marks: u64,
++    window: Option<(u64, u64)>,
++    exit: bool,
++}
++
++fn setup() -> &'static Setup {
++    static SETUP: OnceLock<Setup> = OnceLock::new();
++    SETUP.get_or_init(|| {
++        let marks = std::env::var("VICTORY_MARKS").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(0);
++        let window = std::env::var("VICTORY_WINDOW").ok().and_then(|v| {
++            let (a, b) = v.trim().split_once('-')?;
++            Some((a.parse().ok()?, b.parse().ok()?))
++        });
++        let exit = std::env::var_os("VICTORY_EXIT_AFTER_WINDOW").is_some_and(|v| v == "1");
++        if marks > 0 || window.is_some() {
++            tracing::info!(marks, ?window, exit, "world-frame clock on (VICTORY_MARKS / VICTORY_WINDOW)");
++        }
++        let touch = std::env::var("VICTORY_TOUCH_AT")
++            .unwrap_or_default()
++            .split(',')
++            .filter_map(|w| w.trim().parse().ok())
++            .collect();
++        let touch_file = std::env::var_os("VICTORY_TOUCH_FILE").map(std::path::PathBuf::from);
++        Setup { touch, touch_file, marks, window, exit }
++    })
++}
++
++/// At the present of `frame` (counted from 1), with `drawn` draws run on
++/// the host so far.
++pub(crate) fn present(frame: u64, drawn: u64) {
++    static DRAWN: AtomicU64 = AtomicU64::new(0);
++    static START: OnceLock<Instant> = OnceLock::new();
++    static WINDOW_START: OnceLock<Instant> = OnceLock::new();
++    static MARK: std::sync::Mutex<Option<Instant>> = std::sync::Mutex::new(None);
++    LAST.store(frame, Relaxed);
++    if drawn.saturating_sub(DRAWN.swap(drawn, Relaxed)) >= 500
++        && WORLD.compare_exchange(u64::MAX, frame, Relaxed, Relaxed).is_ok()
++    {
++        START.get_or_init(Instant::now);
++        tracing::info!(present = frame, "world frame 0 (the first present after 500 draws or more)");
++    }
++    let Some(w) = world_frame() else { return };
++    let s = setup();
++    let now = Instant::now();
++    let since = START.get().map_or(0.0, |t| now.duration_since(*t).as_secs_f64());
++    if let Some(file) = &s.touch_file {
++        if s.touch.contains(&w) {
++            let r = std::fs::write(file, b"1");
++            tracing::info!(world_frame = w, ok = r.is_ok(), "VICTORY_TOUCH_AT: file written");
++        }
++    }
++    if s.marks > 0 && w > 0 && w.is_multiple_of(s.marks) {
++        let mut last = MARK.lock().unwrap_or_else(|e| e.into_inner());
++        let fps = last.map_or(0.0, |t| s.marks as f64 / now.duration_since(t).as_secs_f64());
++        *last = Some(now);
++        tracing::info!(world_frame = w, secs = format!("{since:.3}"), fps = format!("{fps:.3}"), "world frame mark");
++    }
++    if let Some((a, b)) = s.window {
++        if w == a {
++            WINDOW_START.get_or_init(|| now);
++            tracing::info!(world_frame = w, secs = format!("{since:.3}"), "measured window begins (VICTORY_WINDOW)");
++        }
++        if w == b {
++            if let Some(t) = WINDOW_START.get() {
++                let secs = now.duration_since(*t).as_secs_f64();
++                tracing::info!(
++                    from = a,
++                    to = b,
++                    secs = format!("{secs:.3}"),
++                    fps = format!("{:.4}", (b - a) as f64 / secs),
++                    ms = format!("{:.2}", 1000.0 * secs / (b - a) as f64),
++                    "measured window ends (VICTORY_WINDOW)"
++                );
++            }
++            if s.exit {
++                tracing::info!("VICTORY_EXIT_AFTER_WINDOW=1: ending the process");
++                #[cfg(windows)]
++                // SAFETY: plain calls; the run is over.
++                unsafe {
++                    use windows_sys::Win32::System::Threading::{GetCurrentProcess, TerminateProcess};
++                    TerminateProcess(GetCurrentProcess(), 0);
++                }
++                std::process::exit(0);
++            }
++        }
++    }
++}
+diff --git a/crates/victory-gpu/src/lib.rs b/crates/victory-gpu/src/lib.rs
+index 247b080e8..a2b83a665 100644
+--- a/crates/victory-gpu/src/lib.rs
++++ b/crates/victory-gpu/src/lib.rs
+@@ -54,8 +54,8 @@ pub mod dxgi;
+ mod dxc;
+ pub mod fence;
+ pub mod frame;
+-#[cfg_attr(not(windows), allow(dead_code))]
+-mod heap_pass;
++/// LOCAL (tools-iter): world-frame clock for short repeatable runs.
++pub mod iterate;
+ #[cfg(windows)]
+ mod gpuprof;
+ #[cfg(windows)]
+diff --git a/crates/victory-gpu/src/queue.rs b/crates/victory-gpu/src/queue.rs
+index 26fa7d732..930129550 100644
+--- a/crates/victory-gpu/src/queue.rs
++++ b/crates/victory-gpu/src/queue.rs
+@@ -1905,6 +1905,9 @@ fn present_now(this: This, planes: u32, plane_parameters: *const Plane, _paramet
+     #[cfg(windows)]
+     crate::framelog::add(crate::framelog::T::PresentLineUs, presenting.elapsed().as_micros() as u64);
+     let frame = FRAMES.fetch_add(1, Ordering::Relaxed) + 1;
++    // LOCAL (tools-iter): the world-frame clock (VICTORY_MARKS, VICTORY_WINDOW, frame-keyed keys).
++    #[cfg(windows)]
++    crate::iterate::present(frame, crate::draw::drawn());
+     #[cfg(windows)]
+     if sent_behind && PRESENTS_BEHIND.load(Ordering::Relaxed).is_multiple_of(512) {
+         tracing::info!(
+diff --git a/crates/victory-hle/src/modules/gameinput.rs b/crates/victory-hle/src/modules/gameinput.rs
+index c8c556589..7bb46a724 100644
+--- a/crates/victory-hle/src/modules/gameinput.rs
++++ b/crates/victory-hle/src/modules/gameinput.rs
+@@ -1213,13 +1213,51 @@ mod host {
+         }
+     }
+ 
++    /// LOCAL (tools-iter): when a scripted key is held.
++    #[derive(Clone, Copy)]
++    enum When {
++        /// From this long after input starts, for `VICTORY_KEYS_HOLD`.
++        Time(Duration),
++        /// World frames, first and last.
++        World(u64, u64),
++        /// Presents, first and last.
++        Present(u64, u64),
++    }
++
++    impl When {
++        fn parse(at: &str) -> Option<When> {
++            let frames = |rest: &str| -> Option<(u64, u64)> {
++                static HOLD: LazyLock<u64> = LazyLock::new(|| {
++                    std::env::var("VICTORY_KEYS_HOLD_FRAMES").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(2)
++                });
++                match rest.split_once('-') {
++                    Some((a, b)) => Some((a.parse().ok()?, b.parse().ok()?)),
++                    None => rest.parse().ok().map(|a: u64| (a, a + HOLD.max(1) - 1)),
++                }
++            };
++            if let Some(rest) = at.strip_prefix('w') {
++                frames(rest).map(|(a, b)| When::World(a, b))
++            } else if let Some(rest) = at.strip_prefix('f') {
++                frames(rest).map(|(a, b)| When::Present(a, b))
++            } else {
++                Duration::try_from_secs_f64(at.parse().ok()?).ok().map(When::Time)
++            }
++        }
++    }
++
+     /// Debugging aid: `VICTORY_KEYS=<seconds>:<key>,...` holds each key for
+     /// 0.2 s that long after input starts, with or without focus. A key is a
+     /// letter, a digit, or `Enter`, `Esc`, `Tab`, `Back`, `Up`, `Down`,
+     /// `Left`, `Right` (the stand-in pad's table maps them to buttons).
+     /// Unset (the default), nothing is pressed.
++    ///
++    /// LOCAL (tools-iter): an entry's time may instead be a frame range,
++    /// `w<N>[-<M>]` (world frames, `victory_gpu::iterate`: the same moment
++    /// of game time in every run) or `f<N>[-<M>]` (presents since the
++    /// start); the key is held from frame N through M (N plus
++    /// `VICTORY_KEYS_HOLD_FRAMES` - 1 unless given; 2 frames by default).
+     fn scripted() -> Vec<u8> {
+-        static SCRIPT: LazyLock<(Instant, Vec<(Duration, u8)>)> = LazyLock::new(|| {
++        static SCRIPT: LazyLock<(Instant, Vec<(When, u8)>)> = LazyLock::new(|| {
+             let list = std::env::var("VICTORY_KEYS").unwrap_or_default();
+             let keys = list.split(',').filter_map(|entry| {
+                 let (at, key) = entry.split_once(':')?;
+@@ -1237,10 +1275,7 @@ mod host {
+                     }
+                     _ => return None,
+                 };
+-                Some((
+-                    Duration::try_from_secs_f64(at.trim().parse().ok()?).ok()?,
+-                    vk,
+-                ))
++                Some((When::parse(at.trim())?, vk))
+             });
+             (Instant::now(), keys.collect())
+         });
+@@ -1255,9 +1290,15 @@ mod host {
+         });
+         let (start, keys) = &*SCRIPT;
+         let now = start.elapsed();
++        let world = victory_gpu::iterate::world_frame();
++        let presents = victory_gpu::iterate::presents();
+         let mut down: Vec<u8> = keys
+             .iter()
+-            .filter(|&&(at, _)| (at..at + *HOLD).contains(&now))
++            .filter(|&&(at, _)| match at {
++                When::Time(at) => (at..at + *HOLD).contains(&now),
++                When::World(a, b) => world.is_some_and(|w| (a..=b).contains(&w)),
++                When::Present(a, b) => (a..=b).contains(&presents),
++            })
+             .map(|&(_, vk)| vk)
+             .collect();
+         #[cfg(feature = "diagnostics")]

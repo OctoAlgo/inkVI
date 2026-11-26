@@ -1,0 +1,107 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Octo <180629317+OctoAlgo@users.noreply.github.com>
+Date: Wed, 25 Nov 2026 19:42:54 +0100
+Subject: [PATCH 17/39] name the host pipelines that take long to make
+ (SLOW-PIPELINE log lines; missing() names the shaders being made)
+
+
+Kit-Source: own (diagnostics build only)
+Kit-Licence: GPL-3.0
+---
+ crates/victory-gpu/src/pipeline/make.rs | 65 ++++++++++++++++++++++++-
+ 1 file changed, 64 insertions(+), 1 deletion(-)
+
+diff --git a/crates/victory-gpu/src/pipeline/make.rs b/crates/victory-gpu/src/pipeline/make.rs
+index e6e76867a..6b6f1796c 100644
+--- a/crates/victory-gpu/src/pipeline/make.rs
++++ b/crates/victory-gpu/src/pipeline/make.rs
+@@ -102,6 +102,8 @@ impl Pending {
+     }
+ 
+     fn make(&self) {
++        #[cfg(feature = "diagnostics")]
++        let slow = slow::begin(&self.key, &self.shaders, self.graphics.is_some());
+         self.made.get_or_init(|| {
+             if let Some(hash) = denied(&self.shaders) {
+                 tracing::warn!(hash, shaders = ?self.shaders, "pipeline not built: its shader is in VICTORY_DENY_PIPELINES");
+@@ -109,6 +111,8 @@ impl Pending {
+             }
+             HostPipeline::new(&self.shaders, self.graphics.as_deref())
+         });
++        #[cfg(feature = "diagnostics")]
++        slow::end(slow, self.made.get().is_some_and(|m| m.is_some()));
+         let (lock, done) = &DONE;
+         let _held = lock.lock().unwrap_or_else(|e| e.into_inner());
+         done.notify_all();
+@@ -121,7 +125,7 @@ impl Pending {
+ pub(crate) fn missing(p: &Pending) -> Option<String> {
+     match p.made.get() {
+         Some(Some(_)) => None,
+-        None => Some("being made".into()),
++        None => Some(format!("being made {:?}", p.shaders)),
+         Some(None) => {
+             let failed: Vec<String> = p
+                 .shaders
+@@ -533,3 +537,62 @@ mod tests {
+         assert!(queue.pop().is_none());
+     }
+ }
++
++/// LOCAL (daily-pr3, diagnostics): names the host pipelines whose making takes long
++/// (worker 18 found 4 "being made" for the whole run: every frame waited its budget for
++/// them). Each make is noted when it starts; a watcher thread logs, once each, those still
++/// being made after 20 s (stage+hash of every shader, compute or graphics, the thread), and
++/// a make that ends after more than 5 s is logged with its time.
++#[cfg(feature = "diagnostics")]
++mod slow {
++    use std::collections::HashMap;
++    use std::sync::{Arc, Mutex, Once};
++    use std::time::{Duration, Instant};
++
++    struct Making {
++        at: Instant,
++        what: String,
++        thread: String,
++        named: bool,
++    }
++
++    static MAKING: Mutex<Option<HashMap<u64, Making>>> = Mutex::new(None);
++    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
++
++    pub(super) fn begin(key: &str, shaders: &[Arc<super::Shader>], graphics: bool) -> (u64, Instant) {
++        static WATCH: Once = Once::new();
++        WATCH.call_once(|| {
++            let _ = std::thread::Builder::new().name("victory-slow-pipelines".into()).spawn(|| loop {
++                std::thread::sleep(Duration::from_secs(5));
++                let mut m = MAKING.lock().unwrap_or_else(|e| e.into_inner());
++                for p in m.get_or_insert_with(HashMap::new).values_mut() {
++                    if !p.named && p.at.elapsed() >= Duration::from_secs(20) {
++                        p.named = true;
++                        tracing::warn!(pipeline = %p.what, thread = %p.thread, secs = p.at.elapsed().as_secs(),
++                            "SLOW-PIPELINE a host pipeline is still being made");
++                    }
++                }
++            });
++        });
++        let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
++        let what = format!("{} {} {:?}", if graphics { "graphics" } else { "compute" }, key, shaders);
++        let thread = std::thread::current().name().unwrap_or("?").to_owned();
++        let at = Instant::now();
++        MAKING
++            .lock()
++            .unwrap_or_else(|e| e.into_inner())
++            .get_or_insert_with(HashMap::new)
++            .insert(id, Making { at, what, thread, named: false });
++        (id, at)
++    }
++
++    pub(super) fn end((id, at): (u64, Instant), made: bool) {
++        let p = MAKING.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).remove(&id);
++        if let Some(p) = p
++            && at.elapsed() >= Duration::from_secs(5)
++        {
++            tracing::warn!(pipeline = %p.what, made, secs = at.elapsed().as_secs_f32(),
++                "SLOW-PIPELINE a host pipeline took long to make");
++        }
++    }
++}

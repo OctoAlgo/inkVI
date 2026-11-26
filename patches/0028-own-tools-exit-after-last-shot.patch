@@ -1,0 +1,34 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Octo <180629317+OctoAlgo@users.noreply.github.com>
+Date: Thu, 26 Nov 2026 02:27:48 +0100
+Subject: [PATCH 28/39] VICTORY_EXIT_AFTER_SHOTS waits for the last listed
+ frame's own shot
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_011dFkrUVYjMaeV1b3VJ4JEb
+
+Kit-Source: own (run tooling, opt-in)
+Kit-Licence: GPL-3.0
+---
+ crates/victory-gpu/src/shot.rs | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/crates/victory-gpu/src/shot.rs b/crates/victory-gpu/src/shot.rs
+index 3658640bc..64d1d7559 100644
+--- a/crates/victory-gpu/src/shot.rs
++++ b/crates/victory-gpu/src/shot.rs
+@@ -1068,8 +1068,13 @@ fn finish(carry: &Carry, to: &std::path::Path, how: &str, missing: u32) {
+         "frame shot saved"
+     );    // LOCAL (tools-iter): VICTORY_EXIT_AFTER_SHOTS=1 ends the run once the
+     // last VICTORY_SHOT_AT frame is behind.
++    // Only the shot of that last frame ends it (one skipped while another
++    // was still being taken does not).
++    let world = WORLD.load(Relaxed);
+     if let Some(&last) = at().iter().max() {
+-        crate::iterate::shot_saved(last);
++        if world != u64::MAX && (carry.first + 1).saturating_sub(world) >= last {
++            crate::iterate::shot_saved(last);
++        }
+     }
+ }
+ 

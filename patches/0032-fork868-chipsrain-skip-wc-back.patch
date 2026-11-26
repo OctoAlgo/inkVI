@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Octo <180629317+OctoAlgo@users.noreply.github.com>
 Date: Thu, 26 Nov 2026 09:05:22 +0100
-Subject: [PATCH 34/39] fork #868 VICTORY_SKIP_WC_BACK (census.rs from
+Subject: [PATCH 32/37] fork #868 VICTORY_SKIP_WC_BACK (census.rs from
  fef959240, hand-ported onto our relay / in-flight / merge piece loops; census
  hook renamed census_reserved)
 
@@ -446,10 +446,10 @@ index 000000000..a9e71c2dd
 +    }
 +}
 diff --git a/crates/victory-gpu/src/host.rs b/crates/victory-gpu/src/host.rs
-index 028cf2665..f6321e722 100644
+index a1b000f01..7c3973f41 100644
 --- a/crates/victory-gpu/src/host.rs
 +++ b/crates/victory-gpu/src/host.rs
-@@ -9170,7 +9170,9 @@ impl Host {
+@@ -9321,7 +9321,9 @@ impl Host {
                              continue;
                          }
                          let (lo, hi) = r.shadow.card_piece(&r.span, p);
@@ -460,7 +460,7 @@ index 028cf2665..f6321e722 100644
                              pieces.push((r.shadow.clone(), lo, hi, total));
                              piece_numbers.push((copy, r.span.first + p));
                              total += (hi - lo) as u64;
-@@ -9792,7 +9794,9 @@ impl Host {
+@@ -9943,7 +9945,9 @@ impl Host {
                              continue;
                          }
                          let (lo, hi) = r.shadow.card_piece(&r.span, p);
@@ -471,7 +471,7 @@ index 028cf2665..f6321e722 100644
                              continue;
                          }
                          let from = inflight_piece_from(&r.span, p);
-@@ -10172,7 +10176,9 @@ impl Host {
+@@ -10323,7 +10327,9 @@ impl Host {
                      continue;
                  }
                  let (lo, hi) = r.shadow.card_piece(&r.span, p);
@@ -536,7 +536,7 @@ index a2b83a665..27aa84933 100644
      inplace_level, title_memory_freeing, title_memory_section, title_memory_section_gone,
      title_memory_view,
 diff --git a/crates/victory-gpu/src/shadow.rs b/crates/victory-gpu/src/shadow.rs
-index 06b2e8899..ce4218d79 100644
+index 1b936ac02..99ac4a0c2 100644
 --- a/crates/victory-gpu/src/shadow.rs
 +++ b/crates/victory-gpu/src/shadow.rs
 @@ -4766,6 +4766,11 @@ unsafe impl Send for Shadow {}
@@ -552,7 +552,7 @@ index 06b2e8899..ce4218d79 100644
      pub(crate) fn gpu(&self, address: u64) -> u64 {
          self.gpu + (address - self.start)
 diff --git a/crates/victory-hle/src/modules/xmem.rs b/crates/victory-hle/src/modules/xmem.rs
-index 1a192b304..24536d5d8 100644
+index 2f3b1d1b8..db63b005a 100644
 --- a/crates/victory-hle/src/modules/xmem.rs
 +++ b/crates/victory-hle/src/modules/xmem.rs
 @@ -110,6 +110,7 @@ fn virtual_alloc(

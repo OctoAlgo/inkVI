@@ -7,21 +7,22 @@ It is a living base: we build on it, and anyone may take single patches from it 
 
 ## What's in it
 
-- `BASE`: the pinned base (victory-fork `main` at `ceb9e1f7a`).
+- `BASE`: the pinned base (victory-fork `main` at `e4245f3c1`).
 - `patches/`: the series, numbered, one concern per patch, applied in the order of `patches/series`.
   `patches/README.md` lists every patch with its source (fork PR, upstream VIctory PR, other forks, or "own")
   and licence; each patch also carries `Kit-Source:` / `Kit-Licence:` trailers.
-  The full series gives the tree we measure as `--pr9b`, minus four default-off experiments (CHANGELOG.md).
+  v0.1 gave the tree we measure as `--pr9b` (minus four default-off experiments); v0.2 is that stack on fork main
+  `e4245f3c1` (CHANGELOG.md).
 - `build.sh`: fetch the base, check the inputs, apply the series, build release + diagnostics.
 - `launch/`: `speed.env` (the speed preset) and the launch flags (`launch/README.md`).
 - `docs/`: the scene we measure on (`scene.md`), known issues (`known-issues.md`), how to move to a newer base
   (`rebase.md`).
 - `CHANGELOG.md`: measured results per round and per patch.
 
-Highlights: fork #995 frame-rate work, #927 faces (16-bit buffer accesses), #854/#993 wave64 programs paired on
-32-lane GPUs, #1002 exact cascade shadows, an ambient stand-in for the missing ray-traced indirect light (#917 +
+Highlights: fork #995 frame-rate work, #854/#993 wave64 programs paired on 32-lane GPUs, an ambient stand-in for the missing ray-traced indirect light (#917 +
 Belobug's refinements), small title buffers resident on the card (`VICTORY_CARD_BUFFERS_MIN_KB=64`, +33 %), and the
-dark-cell fix (`VICTORY_PIPELINE_WAIT_FIRST_MS`).
+dark-cell fix (`VICTORY_PIPELINE_WAIT_FIRST_MS`). From the base: #927 faces, #1002 cascade shadows and the black-face
+streaming fix (`VICTORY_PAGE_WRITES` 1|2|8), all in fork main since v0.2.
 
 ## How to build
 
@@ -37,12 +38,13 @@ The script refuses a work dir that is not at the pinned base or has local change
 
 Patches are plain `git format-patch` mails; paths in this README are relative to the kit root.
 
-    git am -3 /path/to/inkvi-kit/patches/0012-fork927-tippythetaidum-faces.patch
+    git am -3 /path/to/inkvi-kit/patches/0013-vpr1489-ascilch-gather4-c.patch
 
 - Patches marked "own (build fix ...)" or "resolution" only make sense together with the patch they fix.
-- Patches 0005 (#995), 0012 (#927), 0014 (#854/#993) and 0029 (striped lock) had conflicts with newer fork main;
-  their merge-time resolutions are collected in `0039-own-resolution-ceb9e1f7a.patch`. Taken alone onto
-  `ceb9e1f7a` they apply, but you may need the matching hunks of 0039 to compile.
+- The series was resolved against fork main as one merge; its merge-time resolutions (mostly in 0005 #995, 0012
+  #854/#993 and 0027 striped lock, against fork main's #927, #646, clamp windows, #3198 and page writes) are
+  collected in `0037-own-resolution-e4245f3c1.patch`. Taken alone onto `e4245f3c1` a patch applies with `-3`, but
+  you may need the matching hunks of 0037 to compile.
 - Every new switch is off unless set; read the patch's commit message for its switch and default.
 
 ## Not in this repository

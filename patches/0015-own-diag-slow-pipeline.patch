@@ -1,9 +1,8 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Octo <180629317+OctoAlgo@users.noreply.github.com>
 Date: Wed, 25 Nov 2026 19:42:54 +0100
-Subject: [PATCH 17/39] name the host pipelines that take long to make
+Subject: [PATCH 15/37] name the host pipelines that take long to make
  (SLOW-PIPELINE log lines; missing() names the shaders being made)
-
 
 Kit-Source: own (diagnostics build only)
 Kit-Licence: GPL-3.0

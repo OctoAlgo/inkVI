@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Yorivel <197960446+Yorivel@users.noreply.github.com>
 Date: Thu, 26 Nov 2026 01:13:00 +0200
-Subject: [PATCH 32/39] GPU: VICTORY_BACK_QUIET=1: copy-backs of write-watched
+Subject: [PATCH 30/37] GPU: VICTORY_BACK_QUIET=1: copy-backs of write-watched
  memory no longer read as title writes
 
 After a copy-back writes private, write-watched title memory, the pages'
@@ -28,7 +28,7 @@ Kit-Licence: GPL-3.0
  1 file changed, 84 insertions(+), 4 deletions(-)
 
 diff --git a/crates/victory-gpu/src/shadow.rs b/crates/victory-gpu/src/shadow.rs
-index 233951fb0..4a3e5ee7a 100644
+index 4dbdf67ff..ad6efdbf8 100644
 --- a/crates/victory-gpu/src/shadow.rs
 +++ b/crates/victory-gpu/src/shadow.rs
 @@ -5135,7 +5135,9 @@ impl Shadow {
@@ -119,7 +119,7 @@ index 233951fb0..4a3e5ee7a 100644
      /// With `crate::inplace::back_own` (`VICTORY_BACK_OWN_VIEW=1`): stores
      /// what a merge made of title memory `[at, at + bytes.len())` (inside
      /// one 64 KiB page, as every merged stretch is) through a view of our
-@@ -6726,9 +6791,11 @@ impl Shadow {
+@@ -6728,9 +6793,11 @@ impl Shadow {
              if differs != 0 {
                  count_skinned(skinned::MERGED, (start + at) as u64, (start + at + title.len()) as u64);
                  crate::host::shaders_write(start + at, &title[..]);
@@ -134,7 +134,7 @@ index 233951fb0..4a3e5ee7a 100644
                  written = n;
              }
          } else {
-@@ -6824,6 +6891,9 @@ impl Shadow {
+@@ -6826,6 +6893,9 @@ impl Shadow {
          }
          count_skinned(skinned::MERGED, (start + at) as u64, (start + at + title.len()) as u64);
          crate::host::shaders_write(start + at, &title[..]);
@@ -144,7 +144,7 @@ index 233951fb0..4a3e5ee7a 100644
          if self.put_back_own(start + at, &title[..]) {
              #[cfg(feature = "diagnostics")]
              crate::backreads::stored(self.id, (self.start, self.len), start + at, n, true);
-@@ -7381,6 +7451,16 @@ fn window_of(address: u64, end: u64, grid: u64) -> (u64, u64) {
+@@ -7383,6 +7453,16 @@ fn window_of(address: u64, end: u64, grid: u64) -> (u64, u64) {
  /// together with `VICTORY_WINDOW_KB` below 4096: on the 4 MiB grid an ask
  /// with a length in the same cell makes the whole cell's window, and the
  /// tail is that.

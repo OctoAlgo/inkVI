@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: powplusplus <222417016+powplusplus@users.noreply.github.com>
 Date: Wed, 25 Nov 2026 10:03:24 +1000
-Subject: [PATCH 18/39] Shaders: one back edge per loop header
+Subject: [PATCH 16/37] Shaders: one back edge per loop header
 
 vkd3d-proton's DXIL conversion keeps one back edge per loop header, as
 DXC's code has. With several, the others stay in the header's forward

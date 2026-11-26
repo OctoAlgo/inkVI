@@ -1,10 +1,9 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Octo <180629317+OctoAlgo@users.noreply.github.com>
 Date: Wed, 25 Nov 2026 19:56:50 +0100
-Subject: [PATCH 21/39] the clamp's split-dispatch line reads rec_records (the
+Subject: [PATCH 19/37] the clamp's split-dispatch line reads rec_records (the
  #993 merge left #993's name: the clamp did not compile, every indirect call
  was dropped)
-
 
 Kit-Source: own (fix of the #993 merge: the clamp did not compile)
 Kit-Licence: GPL-3.0
@@ -13,10 +12,10 @@ Kit-Licence: GPL-3.0
  1 file changed, 1 insertion(+), 1 deletion(-)
 
 diff --git a/crates/victory-gpu/src/indirect.rs b/crates/victory-gpu/src/indirect.rs
-index 2ad7ba431..7fde97a99 100644
+index afce58fa3..777fa700f 100644
 --- a/crates/victory-gpu/src/indirect.rs
 +++ b/crates/victory-gpu/src/indirect.rs
-@@ -310,7 +310,7 @@ void main(uint3 id : SV_DispatchThreadID, uint gi : SV_GroupIndex) {
+@@ -314,7 +314,7 @@ void main(uint3 id : SV_DispatchThreadID, uint gi : SV_GroupIndex) {
      if (!active) {
          // The host runs every record of a split dispatch (the count is the
          // clamp's alone): those past the count run empty.

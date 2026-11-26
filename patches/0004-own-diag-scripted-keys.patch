@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Octo <180629317+OctoAlgo@users.noreply.github.com>
 Date: Wed, 25 Nov 2026 17:05:52 +0100
-Subject: [PATCH 04/39] scripted keys VICTORY_KEYS_HOLD / VICTORY_KEYS_FILE
+Subject: [PATCH 04/37] scripted keys VICTORY_KEYS_HOLD / VICTORY_KEYS_FILE
  (diagnostics only)
 
 Test aids for headless runs, inside the diagnostics-only scripted()

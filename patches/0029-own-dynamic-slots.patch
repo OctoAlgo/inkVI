@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Octo <180629317+OctoAlgo@users.noreply.github.com>
 Date: Thu, 26 Nov 2026 07:58:54 +0100
-Subject: [PATCH 31/39] VICTORY_DYNAMIC_SLOTS=<n>: a larger ring of dynamic
+Subject: [PATCH 29/37] VICTORY_DYNAMIC_SLOTS=<n>: a larger ring of dynamic
  view slots on a capped host heap (off by default)
 
 Idea from trustno1-coder/VIctory-NVIDIA a9632bc (GPL-3.0, read and audited; this is our own
@@ -19,10 +19,10 @@ Kit-Licence: GPL-3.0
  1 file changed, 29 insertions(+), 3 deletions(-)
 
 diff --git a/crates/victory-gpu/src/descriptor/host.rs b/crates/victory-gpu/src/descriptor/host.rs
-index 0dfec7d60..403874e41 100644
+index 3d3c685c2..bff32deae 100644
 --- a/crates/victory-gpu/src/descriptor/host.rs
 +++ b/crates/victory-gpu/src/descriptor/host.rs
-@@ -1159,6 +1159,20 @@ pub(crate) fn probe_view_limit() {
+@@ -1167,6 +1167,20 @@ pub(crate) fn probe_view_limit() {
  /// table past them is made afresh in these slots like any other.
  pub(crate) const DYNAMIC: u32 = 1 << 18;
  
@@ -43,7 +43,7 @@ index 0dfec7d60..403874e41 100644
  impl HostHeap {
      pub(crate) fn new(sampler: bool, count: u32) -> Option<Self> {
          let host = host()?;
-@@ -1191,6 +1205,18 @@ impl HostHeap {
+@@ -1199,6 +1213,18 @@ impl HostHeap {
          } else {
              victory_shader::emit::view_heap_limit()
          };
@@ -62,7 +62,7 @@ index 0dfec7d60..403874e41 100644
          let (heap, count, size) = if null == 0 {
              match make(count + extra) {
                  Ok(heap) => (heap, count, count + extra),
-@@ -1269,8 +1295,8 @@ impl HostHeap {
+@@ -1278,8 +1304,8 @@ impl HostHeap {
                  .map(|_| std::sync::atomic::AtomicU64::new(0))
                  .collect(),
              kept: (0..count + extra).map(|_| Mutex::new(None)).collect(),
@@ -73,7 +73,7 @@ index 0dfec7d60..403874e41 100644
              too_long: std::sync::atomic::AtomicU32::new(u32::MAX),
              strides,
              buffers: Mutex::default(),
-@@ -1439,7 +1465,7 @@ impl HostHeap {
+@@ -1448,7 +1474,7 @@ impl HostHeap {
          crate::copystat::add(crate::copystat::C::DynamicNs, started.elapsed().as_nanos() as u64);
          taken[first..first + n].fill(true);
          self.free.fetch_sub(n as u32, std::sync::atomic::Ordering::Relaxed);

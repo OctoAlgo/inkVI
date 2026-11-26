@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Octo <180629317+OctoAlgo@users.noreply.github.com>
 Date: Thu, 26 Nov 2026 13:28:55 +0100
-Subject: [PATCH 37/39] VICTORY_PIPELINE_WAIT_EARLY_MS: a pipeline's first draw
+Subject: [PATCH 35/37] VICTORY_PIPELINE_WAIT_EARLY_MS: a pipeline's first draw
  waits for it while early pipelines are queued (dark-cell fix)
 
 Round 9b: the dark cell comes from host pipelines missing from the NVIDIA

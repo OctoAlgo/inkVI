@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: UwUCammie <UwUCammie@users.noreply.github.com>
 Date: Wed, 25 Nov 2026 12:17:28 +0000
-Subject: [PATCH 10/39] GPU: a constant can stand in for indirect light while
+Subject: [PATCH 10/37] GPU: a constant can stand in for indirect light while
  rays do not run (VICTORY_AMBIENT, off by default)
 
 The title's indirect diffuse light comes from probes it fills by tracing
@@ -295,10 +295,10 @@ index 000000000..9858f5e78
 +    }
 +}
 diff --git a/crates/victory-gpu/src/draw.rs b/crates/victory-gpu/src/draw.rs
-index cdc909d14..337f6feb6 100644
+index 95058c10a..b2ba5c01c 100644
 --- a/crates/victory-gpu/src/draw.rs
 +++ b/crates/victory-gpu/src/draw.rs
-@@ -4190,6 +4190,41 @@ impl State {
+@@ -4253,6 +4253,41 @@ impl State {
          unsafe { list.list.Dispatch(x, y, z) };
          list.prof_draw(true);
          DISPATCHED.fetch_add(1, Ordering::Relaxed);

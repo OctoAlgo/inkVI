@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Octo <180629317+OctoAlgo@users.noreply.github.com>
 Date: Wed, 25 Nov 2026 18:06:20 +0100
-Subject: [PATCH 08/39] the keys file is read in diagnostics builds only
+Subject: [PATCH 08/37] the keys file is read in diagnostics builds only
  (release build after the #995 merge)
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>

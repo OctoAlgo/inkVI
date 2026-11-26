@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: gmanka <gmankab@gmail.com>
 Date: Wed, 25 Nov 2026 20:14:51 +0500
-Subject: [PATCH 23/39] GPU: bound detiling slices to the upload allocation
+Subject: [PATCH 21/37] GPU: bound detiling slices to the upload allocation
 
 GetCopyableFootprints returns an allocation size that may stop after the
 last row's payload. The detiler used a full aligned pitch for every row

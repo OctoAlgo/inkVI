@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Octo <180629317+OctoAlgo@users.noreply.github.com>
 Date: Thu, 26 Nov 2026 09:08:38 +0100
-Subject: [PATCH 35/39] VIctory #2723: image atomics name a U32 element in the
+Subject: [PATCH 33/37] VIctory #2723: image atomics name a U32 element in the
  handle annotation (d678bc26a; the handle key by element type, cb3162362, is
  already ours). Its test (b7300eb5b) not ported: conflicts with our shader.rs.
 
@@ -14,10 +14,10 @@ Kit-Licence: GPL-3.0
  1 file changed, 7 insertions(+), 1 deletion(-)
 
 diff --git a/crates/victory-shader/src/emit/lower.rs b/crates/victory-shader/src/emit/lower.rs
-index 3f2146532..07e5db91d 100644
+index 60525de46..e42c4fa9d 100644
 --- a/crates/victory-shader/src/emit/lower.rs
 +++ b/crates/victory-shader/src/emit/lower.rs
-@@ -9711,7 +9711,13 @@ impl<'a> Lower<'a> {
+@@ -9812,7 +9812,13 @@ impl<'a> Lower<'a> {
              || self
                  .used_kind(src)
                  .is_some_and(|u| u.kind == ResourceType::Uav);

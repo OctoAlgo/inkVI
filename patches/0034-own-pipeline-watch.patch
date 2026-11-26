@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Octo <180629317+OctoAlgo@users.noreply.github.com>
 Date: Thu, 26 Nov 2026 13:21:11 +0100
-Subject: [PATCH 36/39] pipeline workers' watch line +
+Subject: [PATCH 34/37] pipeline workers' watch line +
  VICTORY_PIPELINE_PRIORITY=normal (dark-cell hunt)
 
 Every 2 s while pipelines are queued: queue lengths, made/loaded/started_early,

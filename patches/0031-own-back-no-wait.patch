@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Octo <180629317+OctoAlgo@users.noreply.github.com>
 Date: Thu, 26 Nov 2026 08:25:06 +0100
-Subject: [PATCH 33/39] VICTORY_BACK_NO_WAIT=1, title copies into flights'
+Subject: [PATCH 31/37] VICTORY_BACK_NO_WAIT=1, title copies into flights'
  writes run at once, marked fresher than their landing
 
 The submitting thread stood ~38 ms a frame in one relay title-read wait
@@ -61,10 +61,10 @@ Kit-Licence: GPL-3.0
  create mode 100644 crates/victory-gpu/src/host/back_no_wait.rs
 
 diff --git a/crates/victory-gpu/src/host.rs b/crates/victory-gpu/src/host.rs
-index 4e9e431f2..028cf2665 100644
+index 6e9cbe911..a1b000f01 100644
 --- a/crates/victory-gpu/src/host.rs
 +++ b/crates/victory-gpu/src/host.rs
-@@ -4968,6 +4968,10 @@ struct Line {
+@@ -5058,6 +5058,10 @@ struct Line {
      /// slots) of flights the card has run, taken out of their lists before
      /// the landing, to be dropped outside the lock by [`land`].
      released: Vec<crate::draw::State>,
@@ -75,7 +75,7 @@ index 4e9e431f2..028cf2665 100644
  }
  
  // SAFETY: D3D12 objects (free-threaded) and host lists nothing records
-@@ -4987,6 +4991,7 @@ static LINE: Mutex<Line> = Mutex::new(Line {
+@@ -5077,6 +5081,7 @@ static LINE: Mutex<Line> = Mutex::new(Line {
      landing: 0,
      read_back: Vec::new(),
      released: Vec::new(),
@@ -83,7 +83,7 @@ index 4e9e431f2..028cf2665 100644
  });
  /// Told when a flight joins [`LINE`] or it is poked.
  static LINE_MOVED: std::sync::Condvar = std::sync::Condvar::new();
-@@ -6474,13 +6479,21 @@ fn late_blocked(runs: &[&HostList], count: bool) -> Option<usize> {
+@@ -6564,13 +6569,21 @@ fn late_blocked(runs: &[&HostList], count: bool) -> Option<usize> {
          }
          line.written.clone()
      };
@@ -106,7 +106,7 @@ index 4e9e431f2..028cf2665 100644
      if written.is_empty() {
          return None;
      }
-@@ -6494,6 +6507,17 @@ fn blocked_by(written: &[(usize, usize)], runs: &[&HostList], count: bool) -> Op
+@@ -6584,6 +6597,17 @@ fn blocked_by(written: &[(usize, usize)], runs: &[&HostList], count: bool) -> Op
              if ahead && read_ahead(step, written).is_some() {
                  continue;
              }
@@ -124,7 +124,7 @@ index 4e9e431f2..028cf2665 100644
              if let Some((why, stat)) = step_blocks(step, written) {
                  if count && let Some(n) = LATE_STATS.get(stat) {
                      n.fetch_add(1, Ordering::Relaxed);
-@@ -7533,6 +7557,7 @@ pub(crate) fn first_landing(fences: &[Option<u64>]) -> usize {
+@@ -7626,6 +7650,7 @@ pub(crate) fn first_landing(fences: &[Option<u64>]) -> usize {
  /// anything a caller of [`Host::settle`] may hold: resetting the landed
  /// lists and looking at what queues hold are left to [`late_helper`].
  mod fence_early;
@@ -132,7 +132,7 @@ index 4e9e431f2..028cf2665 100644
  
  fn relay_worker() {
      let Some(host) = host() else {
-@@ -7589,6 +7614,16 @@ fn relay_worker() {
+@@ -7682,6 +7707,16 @@ fn relay_worker() {
                      }
                  }
                  line.landing = items.iter().filter(|l| matches!(l, Late::Run(_))).count();
@@ -149,7 +149,7 @@ index 4e9e431f2..028cf2665 100644
                  line.in_hand = items
                      .iter()
                      .filter_map(|l| match l {
-@@ -7670,6 +7705,7 @@ fn late_line(frames: f64) {
+@@ -7763,6 +7798,7 @@ fn late_line(frames: f64) {
      fill_check::line();
      fill_ahead::line(frames);
      crate::early::line(frames);
@@ -157,7 +157,7 @@ index 4e9e431f2..028cf2665 100644
      let s: Vec<f64> = LATE_STATS.iter().map(|s| s.swap(0, Ordering::Relaxed) as f64 / frames).collect();
      tracing::info!(
          "submissions sent ahead per frame: {:.1} in {:.1} settles ({:.1} flights each time), {:.1} ms waiting for the card in them; \
-@@ -7967,11 +8003,14 @@ pub(crate) fn walls_trace() -> bool {
+@@ -8060,11 +8096,14 @@ pub(crate) fn walls_trace() -> bool {
  /// ([`late`]) did not, at any stage: the flights' lists were settled
  /// without it, so the title read a buffer nobody wrote, as before read-backs
  /// were made (the exposure metering's two small float targets, every frame).
@@ -174,7 +174,7 @@ index 4e9e431f2..028cf2665 100644
      }
      for (buffer, at, [row, rows, pitch]) in &list.deferred().backs {
          let mut data = std::ptr::null_mut();
-@@ -7981,8 +8020,24 @@ fn read_backs(list: &HostList) {
+@@ -8074,8 +8113,24 @@ fn read_backs(list: &HostList) {
          unsafe {
              if buffer.Map(0, None, Some(&mut data)).is_ok() && !data.is_null() {
                  let from = data.cast::<u8>().cast_const();
@@ -200,7 +200,7 @@ index 4e9e431f2..028cf2665 100644
                  }
                  if crate::results::trace() {
                      crate::results::landed(*at);
-@@ -9943,6 +9998,9 @@ impl Host {
+@@ -10094,6 +10149,9 @@ impl Host {
                  let plans: Vec<(u64, &CardPlan)> = flights.iter().filter_map(|f| f.card.as_ref().map(|card| (f.number, card))).collect();
                  let behind = flights.iter().map(|f| f.fence).max().unwrap_or(0);
                  let landed = flights.iter().map(|f| f.number).max().unwrap_or(0);
@@ -210,7 +210,7 @@ index 4e9e431f2..028cf2665 100644
                  self.relay_card_back(&plans, fetch, behind, landed);
                  let mut back: Vec<Declared> = Vec::new();
                  for flight in &flights {
-@@ -9960,6 +10018,7 @@ impl Host {
+@@ -10111,6 +10169,7 @@ impl Host {
                      }
                  }
                  relay_hand_back(&back);
@@ -218,7 +218,7 @@ index 4e9e431f2..028cf2665 100644
                  // Only now, and flight by flight: a range another flight
                  // in the air declared too stays closed to refreshes.
                  for flight in &flights {
-@@ -9984,7 +10043,7 @@ impl Host {
+@@ -10135,7 +10194,7 @@ impl Host {
                      fence_early::landed(flight.fence);
                      ahead = Some(flight.fence);
                      for &i in &flight.order {
@@ -227,7 +227,7 @@ index 4e9e431f2..028cf2665 100644
                      }
                      if let Some(card) = flight.card {
                          self.card_done(card);
-@@ -10001,12 +10060,14 @@ impl Host {
+@@ -10152,12 +10211,14 @@ impl Host {
          if last > 0 {
              FINISHED.store(last, Ordering::Release);
              bury(last);
@@ -242,7 +242,7 @@ index 4e9e431f2..028cf2665 100644
          {
              let mut line = line();
              let Line {
-@@ -10020,11 +10081,14 @@ impl Host {
+@@ -10171,11 +10232,14 @@ impl Host {
                  in_hand,
                  landing,
                  read_back,
@@ -257,7 +257,7 @@ index 4e9e431f2..028cf2665 100644
              // What is still in the air, from the flights that are.
              written.clear();
              read_back.clear();
-@@ -10053,6 +10117,7 @@ impl Host {
+@@ -10204,6 +10268,7 @@ impl Host {
              // by the helper thread (they take locks a waiter may hold).
              *poke = true;
          }
@@ -265,7 +265,7 @@ index 4e9e431f2..028cf2665 100644
          LINE_MOVED.notify_all();
          LINE_LANDED.notify_all();
      }
-@@ -10792,7 +10857,7 @@ impl Host {
+@@ -10943,7 +11008,7 @@ impl Host {
                      Late::Run(flight) => {
                          last = flight.number;
                          for &i in &flight.order {
@@ -274,7 +274,7 @@ index 4e9e431f2..028cf2665 100644
                          }
                          if let Some(card) = flight.card {
                              self.card_done(card);
-@@ -10867,7 +10932,7 @@ impl Host {
+@@ -11018,7 +11083,7 @@ impl Host {
      /// needed ones: the rest of the wait was their landing).
      fn relay_read_wait(&self, runs: &[&HostList]) {
          use read_wait as w;
@@ -283,7 +283,7 @@ index 4e9e431f2..028cf2665 100644
          // The host fence value of the last flight in the line that declared
          // memory read (0: only flights being landed did, which the card has
          // run; `u64::MAX`: a step of ours reads anywhere).
-@@ -11127,7 +11192,7 @@ impl Host {
+@@ -11278,7 +11343,7 @@ impl Host {
          let mut lists: Vec<Option<ID3D12CommandList>> = Vec::with_capacity(2 * runs.len());
          // Where each run's lists start in `lists`.
          let mut firsts = Vec::with_capacity(runs.len());
@@ -292,7 +292,7 @@ index 4e9e431f2..028cf2665 100644
          // The time a settle of flights takes inside this preparing: the
          // wait for the card and the copy-back have their own places on the
          // frame line (run 92 showed them twice, "preparing" 250 ms for 135).
-@@ -11481,7 +11546,7 @@ impl Host {
+@@ -11632,7 +11697,7 @@ impl Host {
          for list in runs {
              // Read backs first: a value written at the bottom of the pipe
              // may be what tells the title that they are there.
@@ -301,7 +301,7 @@ index 4e9e431f2..028cf2665 100644
              for &(at, what, bytes) in &list.deferred().writes {
                  what.write(at as *mut u8, bytes);
              }
-@@ -13670,9 +13735,16 @@ impl HostList {
+@@ -13954,9 +14019,16 @@ impl HostList {
                      let _reads_as = crate::backreads::reading_as(crate::backreads::TITLE_COPY, 0);
                      // Timed from here: the flush above counts its own time.
                      let since = std::time::Instant::now();
@@ -318,7 +318,7 @@ index 4e9e431f2..028cf2665 100644
                      (len, since)
                  }
                  &Step::Fill(dst, src, len, _) if wide_fills() && batch.from_copy.is_empty() => {
-@@ -13994,6 +14066,70 @@ struct Batch {
+@@ -14278,6 +14350,70 @@ struct Batch {
      /// submitting thread.
      textures_due: Vec<std::sync::Arc<crate::texture::Staging>>,
      tex_ns: u64,
@@ -673,7 +673,7 @@ index 000000000..f713529ec
 +    }
 +}
 diff --git a/crates/victory-gpu/src/shadow.rs b/crates/victory-gpu/src/shadow.rs
-index 4a3e5ee7a..06b2e8899 100644
+index ad6efdbf8..1b936ac02 100644
 --- a/crates/victory-gpu/src/shadow.rs
 +++ b/crates/victory-gpu/src/shadow.rs
 @@ -5215,6 +5215,12 @@ impl Shadow {
@@ -709,7 +709,7 @@ index 4a3e5ee7a..06b2e8899 100644
          if !merge_piece(now, held, title) {
              return 0;
          }
-@@ -6857,7 +6876,12 @@ impl Shadow {
+@@ -6859,7 +6878,12 @@ impl Shadow {
          let last = last_difference(gpu, held).unwrap_or(first);
          let (at, n) = (at + first, last + 1 - first);
          let (gpu, held) = (&gpu[first..=last], &mut held[first..=last]);
@@ -723,7 +723,7 @@ index 4a3e5ee7a..06b2e8899 100644
              let dirty = card.dirty.lock().unwrap_or_else(|e| e.into_inner());
              let sent = card.sent.lock().unwrap_or_else(|e| e.into_inner());
              dirty
-@@ -6867,6 +6891,10 @@ impl Shadow {
+@@ -6869,6 +6893,10 @@ impl Shadow {
                  .filter(|&(a, b)| a < at + n && b > at)
                  .collect()
          };
@@ -734,7 +734,7 @@ index 4a3e5ee7a..06b2e8899 100644
          title.clear();
          title.resize(n, 0);
          // Who touched the page since its last store is looked at before our
-@@ -6890,6 +6918,9 @@ impl Shadow {
+@@ -6892,6 +6920,9 @@ impl Shadow {
              return 0;
          }
          count_skinned(skinned::MERGED, (start + at) as u64, (start + at + title.len()) as u64);
@@ -744,7 +744,7 @@ index 4a3e5ee7a..06b2e8899 100644
          crate::host::shaders_write(start + at, &title[..]);
          if self.put_back_quiet(start + at, &title[..]) {
              return n;
-@@ -6906,6 +6937,116 @@ impl Shadow {
+@@ -6908,6 +6939,116 @@ impl Shadow {
          crate::backreads::stored(self.id, (self.start, self.len), start + at, n, false);
          n
      }

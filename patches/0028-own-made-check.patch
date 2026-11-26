@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Octo <180629317+OctoAlgo@users.noreply.github.com>
 Date: Thu, 26 Nov 2026 02:49:55 +0100
-Subject: [PATCH 30/39] VICTORY_MADE_CHECK on #995's wide sync (fable-lock
+Subject: [PATCH 28/37] VICTORY_MADE_CHECK on #995's wide sync (fable-lock
  3b39c666's check, ported)
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
@@ -14,7 +14,7 @@ Kit-Licence: GPL-3.0
  2 files changed, 71 insertions(+)
 
 diff --git a/crates/victory-gpu/src/descriptor.rs b/crates/victory-gpu/src/descriptor.rs
-index 92b698631..30848b0bb 100644
+index a42de63f2..4f6aba773 100644
 --- a/crates/victory-gpu/src/descriptor.rs
 +++ b/crates/victory-gpu/src/descriptor.rs
 @@ -656,6 +656,24 @@ fn mirror_wide(work: Vec<SyncPage>) -> (u64, u64) {
@@ -100,10 +100,10 @@ index 92b698631..30848b0bb 100644
  /// shader-visible heaps looked at, slots on them, slots whose record was
  /// not the one last seen (mirrored), and the microseconds it took.
 diff --git a/crates/victory-gpu/src/descriptor/host.rs b/crates/victory-gpu/src/descriptor/host.rs
-index e482f167b..0dfec7d60 100644
+index b697fc53a..3d3c685c2 100644
 --- a/crates/victory-gpu/src/descriptor/host.rs
 +++ b/crates/victory-gpu/src/descriptor/host.rs
-@@ -2980,6 +2980,12 @@ impl HostHeap {
+@@ -3001,6 +3001,12 @@ impl HostHeap {
          Some(view)
      }
  

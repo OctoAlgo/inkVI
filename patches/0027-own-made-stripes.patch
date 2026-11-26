@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Octo <180629317+OctoAlgo@users.noreply.github.com>
 Date: Wed, 25 Nov 2026 22:42:18 +0100
-Subject: [PATCH 29/39] Host heap slots behind striped locks
+Subject: [PATCH 27/37] Host heap slots behind striped locks
  (VICTORY_MADE_STRIPES; 1 = one lock as before)
 
 The host heap's `made` keys move from one Mutex<Vec<u64>> to one atomic key
@@ -30,7 +30,7 @@ Kit-Licence: GPL-3.0
  create mode 100644 crates/victory-gpu/src/descriptor/slots.rs
 
 diff --git a/crates/victory-gpu/src/descriptor.rs b/crates/victory-gpu/src/descriptor.rs
-index e326e5e12..92b698631 100644
+index 5952bc5aa..a42de63f2 100644
 --- a/crates/victory-gpu/src/descriptor.rs
 +++ b/crates/victory-gpu/src/descriptor.rs
 @@ -12,6 +12,7 @@ use crate::resource::{Memory, PAGEABLE_IIDS};
@@ -42,10 +42,10 @@ index e326e5e12..92b698631 100644
  const HEAP_IIDS: [Iid; 4] = [
      guid(
 diff --git a/crates/victory-gpu/src/descriptor/host.rs b/crates/victory-gpu/src/descriptor/host.rs
-index 3fad0ff5d..e482f167b 100644
+index e1ef0b954..b697fc53a 100644
 --- a/crates/victory-gpu/src/descriptor/host.rs
 +++ b/crates/victory-gpu/src/descriptor/host.rs
-@@ -10,6 +10,7 @@ use std::sync::Mutex;
+@@ -11,6 +11,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
  use windows::Win32::Graphics::Direct3D12::*;
  use windows::Win32::Graphics::Dxgi::Common::*;
  
@@ -53,7 +53,7 @@ index 3fad0ff5d..e482f167b 100644
  use super::{VIEW_TAG, View, view_at};
  use crate::host::host;
  
-@@ -72,12 +73,16 @@ pub(crate) struct HostHeap {
+@@ -78,12 +79,16 @@ pub(crate) struct HostHeap {
      /// ours keeps 2^18 there: 2^16 and 2^17 both ran out in this title.)
      dynamic: u32,
      sampler: bool,
@@ -74,7 +74,7 @@ index 3fad0ff5d..e482f167b 100644
      /// `texture_views_remade`). Empty without the switch.
      null_cbv: Vec<std::sync::atomic::AtomicBool>,
      /// A fingerprint of the record each slot held when the pass over
-@@ -106,11 +111,8 @@ pub(crate) struct HostHeap {
+@@ -112,11 +117,8 @@ pub(crate) struct HostHeap {
      /// index heaps directly, so a slot the title has not rewritten since it
      /// released the resource may still be read, and a freed host resource
      /// read there is a GPU page fault (the console reads stale memory).
@@ -88,7 +88,7 @@ index 3fad0ff5d..e482f167b 100644
      /// Where the search for free dynamic slots starts, and which are taken
      /// (by lists not yet reset).
      next: Mutex<(u32, Vec<bool>)>,
-@@ -1254,7 +1256,7 @@ impl HostHeap {
+@@ -1263,7 +1265,7 @@ impl HostHeap {
              count,
              dynamic: extra,
              sampler,
@@ -97,7 +97,7 @@ index 3fad0ff5d..e482f167b 100644
              null_cbv: (0..if sampler || !(null_skip() || cfg!(test)) { 0 } else { count })
                  .map(|_| std::sync::atomic::AtomicBool::new(false))
                  .collect(),
-@@ -1266,7 +1268,7 @@ impl HostHeap {
+@@ -1275,7 +1277,7 @@ impl HostHeap {
              drawn_key: (0..if sampler || sync_tables() < 2 { 0 } else { count })
                  .map(|_| std::sync::atomic::AtomicU64::new(0))
                  .collect(),
@@ -106,7 +106,7 @@ index 3fad0ff5d..e482f167b 100644
              next: Mutex::new((0, vec![false; DYNAMIC as usize])),
              free: std::sync::atomic::AtomicU32::new(DYNAMIC),
              too_long: std::sync::atomic::AtomicU32::new(u32::MAX),
-@@ -1682,15 +1684,12 @@ impl HostHeap {
+@@ -1697,15 +1699,12 @@ impl HostHeap {
          // from a view the host could not make (`make` gave nothing, the
          // slot is null and keeps nothing). The host copy of such a
          // texture is held by no slot, may have been let go, and would be
@@ -128,7 +128,7 @@ index 3fad0ff5d..e482f167b 100644
      }
  
      /// Levels on demand (`crate::tiles`): makes again the host slots of the
-@@ -1899,12 +1898,13 @@ impl HostHeap {
+@@ -1914,12 +1913,13 @@ impl HostHeap {
              let placed = self.placed.lock().unwrap_or_else(|e| e.into_inner());
              starts.iter().flat_map(|&start| placed.slots_at(start)).collect()
          };
@@ -144,7 +144,7 @@ index 3fad0ff5d..e482f167b 100644
              if key == 0 {
                  continue;
              }
-@@ -1940,24 +1940,23 @@ impl HostHeap {
+@@ -1955,24 +1955,23 @@ impl HostHeap {
      /// the host copy can be let go (`crate::resource::let_go_idle`; a slot
      /// keeps what it views). True if the slot was made.
      pub(crate) fn texture_slot_gone(&self, index: u32) -> bool {
@@ -179,7 +179,7 @@ index 3fad0ff5d..e482f167b 100644
          if key == 0 {
              return;
          }
-@@ -1985,15 +1984,16 @@ impl HostHeap {
+@@ -2000,15 +1999,16 @@ impl HostHeap {
      /// [`null_skip`]: of the constant buffer view records `items` (an
      /// opaque tag, title slot), the tags of those whose `mirror` (not for a
      /// draw) would only write what is there already: the slot is made from
@@ -199,7 +199,7 @@ index 3fad0ff5d..e482f167b 100644
          use std::sync::atomic::Ordering::Relaxed;
          if self.null_cbv.is_empty() {
              return Vec::new();
-@@ -2002,7 +2002,7 @@ impl HostHeap {
+@@ -2017,7 +2017,7 @@ impl HostHeap {
              .iter()
              .copied()
              .filter(|&(_, index)| {
@@ -208,7 +208,7 @@ index 3fad0ff5d..e482f167b 100644
              })
              .collect();
          if found.is_empty() {
-@@ -2023,6 +2023,20 @@ impl HostHeap {
+@@ -2038,6 +2038,20 @@ impl HostHeap {
          found.into_iter().map(|(tag, _)| tag).collect()
      }
  
@@ -229,7 +229,7 @@ index 3fad0ff5d..e482f167b 100644
      /// Title slot `index` is a table's ([`HostHeap::tabled`]). `read`: a
      /// draw read it through the table and brought what it views up to
      /// date, so the slot leaves the queue of textures picked by index; the
-@@ -2120,15 +2134,15 @@ impl HostHeap {
+@@ -2135,15 +2149,15 @@ impl HostHeap {
      /// that record and still views that buffer: what a pass resolved for
      /// it then is what it shows now. Under one lock of each.
      pub(crate) fn still_made(&self, slots: &[(u32, u64, &ID3D12Resource)]) -> Vec<bool> {
@@ -250,7 +250,7 @@ index 3fad0ff5d..e482f167b 100644
                      })
              })
              .collect()
-@@ -2277,49 +2291,16 @@ impl HostHeap {
+@@ -2298,49 +2312,16 @@ impl HostHeap {
  
      /// Slot `index` now views `resource` (or nothing of the host's).
      fn keep(&self, index: u32, resource: Option<ID3D12Resource>) {
@@ -306,7 +306,7 @@ index 3fad0ff5d..e482f167b 100644
                  if lean {
                      drop(old);
                  } else {
-@@ -2535,12 +2516,11 @@ impl HostHeap {
+@@ -2556,12 +2537,11 @@ impl HostHeap {
          // `mirror` would write again ([`HostHeap::cbv_noops`]).
          let mut null_skipped = 0u64;
          if (made_skip() || none_skip() || null_skip()) && !made.is_empty() {
@@ -320,7 +320,7 @@ index 3fad0ff5d..e482f167b 100644
                  if key == 0 {
                      if none_skip() && slot == Some(0) {
                          gone[n] = true;
-@@ -2560,12 +2540,11 @@ impl HostHeap {
+@@ -2581,12 +2561,11 @@ impl HostHeap {
                  }
              }
              if !nulls.is_empty() {
@@ -334,7 +334,7 @@ index 3fad0ff5d..e482f167b 100644
              if skipped + none_skipped + null_skipped > 0 {
                  let mut n = 0;
                  made.retain(|_| {
-@@ -2595,7 +2574,6 @@ impl HostHeap {
+@@ -2616,7 +2595,6 @@ impl HostHeap {
              let seq = SYNC_SEQ.load(Relaxed);
              let mut left = Vec::new();
              let what = drawn_before();
@@ -342,7 +342,7 @@ index 3fad0ff5d..e482f167b 100644
              made.retain(|&(index, _, key)| {
                  let class = key_class(key);
                  let defer = key != 0
-@@ -2608,7 +2586,8 @@ impl HostHeap {
+@@ -2629,7 +2607,8 @@ impl HostHeap {
                  before += u64::from(read);
                  if read && what != 0 {
                      let passed = (class == super::CONSTANT || (what == 3 && class == super::PLACED))
@@ -352,7 +352,7 @@ index 3fad0ff5d..e482f167b 100644
                      before_passed += u64::from(passed);
                      // Mirrored now, or passed over.
                      return !passed;
-@@ -2616,7 +2595,6 @@ impl HostHeap {
+@@ -2637,7 +2616,6 @@ impl HostHeap {
                  left.push((index, key, due, seq));
                  false
              });
@@ -360,7 +360,7 @@ index 3fad0ff5d..e482f167b 100644
              deferred = left.len() as u64;
              if !left.is_empty() {
                  self.left.lock().unwrap_or_else(|e| e.into_inner()).extend(left);
-@@ -2700,9 +2678,8 @@ impl HostHeap {
+@@ -2721,9 +2699,8 @@ impl HostHeap {
                  drawn[n] = (stamp.load(Relaxed).wrapping_sub(seq) as i32) > 0;
              }
          }
@@ -371,7 +371,7 @@ index 3fad0ff5d..e482f167b 100644
              .collect();
          let live = super::records_live(same.iter().map(|&n| key_words(due[n].1)));
          for (&n, live) in same.iter().zip(live) {
-@@ -2718,12 +2695,11 @@ impl HostHeap {
+@@ -2739,12 +2716,11 @@ impl HostHeap {
                  .filter(|&n| !drawn[n] && key_class(due[n].1) == super::CONSTANT)
                  .map(|n| (n, due[n].0))
                  .collect();
@@ -385,7 +385,7 @@ index 3fad0ff5d..e482f167b 100644
          SYNC_STATS[S_LEFT_DRAWN].fetch_add(drawn.iter().filter(|&&d| d).count() as u64, Relaxed);
          due.iter()
              .zip(drawn.iter().zip(&nulled))
-@@ -2897,31 +2873,29 @@ impl HostHeap {
+@@ -2918,31 +2894,29 @@ impl HostHeap {
          let [tag, i, generation] = unsafe { (handle as *const [u32; 3]).read_unaligned() };
          // Generations start at 1, so a made slot's key is never 0.
          let key = u64::from(generation) << 32 | u64::from(i);
@@ -435,7 +435,7 @@ index 3fad0ff5d..e482f167b 100644
                  self.make_null(index);
                  let _ = self.note_buffer(index, None, false);
              } else if for_draw {
-@@ -2930,60 +2904,61 @@ impl HostHeap {
+@@ -2951,60 +2925,61 @@ impl HostHeap {
              }
              return None;
          };
@@ -548,7 +548,7 @@ index 3fad0ff5d..e482f167b 100644
              let kept = if later {
                  None
              } else {
-@@ -2994,8 +2969,11 @@ impl HostHeap {
+@@ -3015,8 +2990,11 @@ impl HostHeap {
              }
              self.set_null_cbv(index, kept.is_none() && matches!(view, View::Constant(..)));
              self.keep(index, kept.flatten());
@@ -562,7 +562,7 @@ index 3fad0ff5d..e482f167b 100644
          }
          #[cfg(feature = "diagnostics")]
          mirror_how(MIRROR_SAME);
-@@ -3005,11 +2983,7 @@ impl HostHeap {
+@@ -3026,11 +3004,7 @@ impl HostHeap {
      /// Whether slot `index` is backed by a made host descriptor (tests).
      #[cfg(test)]
      pub(crate) fn made(&self, index: u32) -> bool {
@@ -575,7 +575,7 @@ index 3fad0ff5d..e482f167b 100644
      }
  
      /// Whether host slot `index` shows `buffer`; `None` if it shows no
-@@ -3017,8 +2991,8 @@ impl HostHeap {
+@@ -3038,8 +3012,8 @@ impl HostHeap {
      /// that is brought up to date for it).
      #[cfg(feature = "diagnostics")]
      pub(crate) fn shows(&self, index: u32, buffer: &ID3D12Resource) -> Option<bool> {
@@ -586,7 +586,7 @@ index 3fad0ff5d..e482f167b 100644
          Some(windows::core::Interface::as_raw(shown) == windows::core::Interface::as_raw(buffer))
      }
  
-@@ -3068,10 +3042,8 @@ impl HostHeap {
+@@ -3089,10 +3063,8 @@ impl HostHeap {
              placed.by_slot.iter().map(|(&slot, &start)| (slot, start)).collect()
          };
          // The keys, then the queue, each under its own lock alone.
@@ -599,7 +599,7 @@ index 3fad0ff5d..e482f167b 100644
          // 0 not queued, 1 held, 2 waiting for memory, 3 other.
          let queued: Vec<u8> = {
              let textures = self.textures.lock().unwrap_or_else(|e| e.into_inner());
-@@ -3091,11 +3063,10 @@ impl HostHeap {
+@@ -3112,11 +3084,10 @@ impl HostHeap {
              c[0] += 1;
              let key = keys[i];
              let shows = key != 0
@@ -615,7 +615,7 @@ index 3fad0ff5d..e482f167b 100644
              if shows {
                  // Made level by level with no level shown: zeros.
                  let blank = view_at(key as u32, (key >> 32) as u32)
-@@ -3171,7 +3142,7 @@ impl HostHeap {
+@@ -3192,7 +3163,7 @@ impl HostHeap {
      /// a slot never made or left null.
      #[cfg(feature = "diagnostics")]
      pub(crate) fn describe_slot(&self, index: u32) -> Option<String> {
@@ -624,7 +624,7 @@ index 3fad0ff5d..e482f167b 100644
          if key == 0 {
              return Some("null".into());
          }
-@@ -5634,10 +5605,7 @@ mod record_key_tests {
+@@ -5684,10 +5655,7 @@ mod record_key_tests {
          // `mirror` leaves them for a draw, null.
          super::super::create_cbv(std::ptr::null(), &[0x1000, 1, 256, 0], at(3));
          super::super::create_cbv(std::ptr::null(), &[0x2000, 1, 256, 0], at(4));

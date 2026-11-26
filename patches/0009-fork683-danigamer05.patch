@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Danigamer05 <96824289+Danigamer05@users.noreply.github.com>
 Date: Wed, 25 Nov 2026 05:23:25 +0100
-Subject: [PATCH 09/39] A loop limit for compute programs alone (hair strands
+Subject: [PATCH 09/37] A loop limit for compute programs alone (hair strands
  no longer scatter with VICTORY_SHADER_LOOP_LIMIT=32)
 
 A lane that reaches the translated loop limit leaves the program without
@@ -54,10 +54,10 @@ index d8adc65a1..875efaa7e 100644
  | `VICTORY_XMA_DUMP=<dir>` | saves the first 32 XMA voices' context and input |
  
 diff --git a/crates/victory-shader/src/emit/lower.rs b/crates/victory-shader/src/emit/lower.rs
-index 5640b48ba..15bae29df 100644
+index 6ab1cb288..5c69c179b 100644
 --- a/crates/victory-shader/src/emit/lower.rs
 +++ b/crates/victory-shader/src/emit/lower.rs
-@@ -11618,7 +11618,10 @@ impl<'a> Lower<'a> {
+@@ -11833,7 +11833,10 @@ impl<'a> Lower<'a> {
          // 14-25 frames in, in a minimap or shadow mesh draw; with every
          // loop cut at 64 it ran 90 frames. Raise them again once shaders
          // stop reading data that is not there yet.)
@@ -70,7 +70,7 @@ index 5640b48ba..15bae29df 100644
              LOOP_LIMIT if self.s.mesh.is_some() || self.s.threads.is_none() => 1 << 8,
              LOOP_LIMIT => 1 << 12,
 diff --git a/crates/victory-shader/src/emit/mod.rs b/crates/victory-shader/src/emit/mod.rs
-index 93089b0ac..77b6ecac8 100644
+index bbe54dbee..aa1a9cda4 100644
 --- a/crates/victory-shader/src/emit/mod.rs
 +++ b/crates/victory-shader/src/emit/mod.rs
 @@ -152,6 +152,44 @@ pub fn loop_limit() -> u32 {
@@ -144,7 +144,7 @@ index 93089b0ac..77b6ecac8 100644
  }
  
  /// A translated shader and what the host binds for it.
-@@ -1009,7 +1039,7 @@ fn signature(part: &[u8]) -> Result<Vec<container::SigElement>, ShaderError> {
+@@ -1044,7 +1074,7 @@ fn signature(part: &[u8]) -> Result<Vec<container::SigElement>, ShaderError> {
  mod tests {
      use super::bitcode::Attr;
      use super::lower::LOOP_LIMIT;
@@ -153,7 +153,7 @@ index 93089b0ac..77b6ecac8 100644
  
      #[test]
      fn the_clean_up_switch_parses_or_runs_every_pass() {
-@@ -1034,6 +1064,18 @@ mod tests {
+@@ -1069,6 +1099,18 @@ mod tests {
              assert_eq!(parse_loop_limit(Some(bad)), LOOP_LIMIT, "{bad:?}");
          }
      }

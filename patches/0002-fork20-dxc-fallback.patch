@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Octo <180629317+OctoAlgo@users.noreply.github.com>
 Date: Wed, 25 Nov 2026 17:05:20 +0100
-Subject: [PATCH 02/39] DXC fallback for runtime HLSL under Wine (fork PR #20)
+Subject: [PATCH 02/37] DXC fallback for runtime HLSL under Wine (fork PR #20)
 
 Squash of fxceless/victory-fork PR #20 by errusso (1fe5ebfe..d4a36b1d):
 runtime HLSL goes to DXC (VICTORY_DXC) when the system compiler under
@@ -515,10 +515,10 @@ index 000000000..e109ba4ba
 +    }
 +}
 diff --git a/crates/victory-gpu/src/host.rs b/crates/victory-gpu/src/host.rs
-index da25b39cf..0e204f34f 100644
+index 9b758bb0f..204137a13 100644
 --- a/crates/victory-gpu/src/host.rs
 +++ b/crates/victory-gpu/src/host.rs
-@@ -1764,52 +1764,11 @@ fn plane_pass() -> Option<&'static PlanePass> {
+@@ -1799,52 +1799,11 @@ fn plane_pass() -> Option<&'static PlanePass> {
      .as_ref()
  }
  
@@ -576,7 +576,7 @@ index da25b39cf..0e204f34f 100644
  }
  
  impl PlanePass {
-@@ -1837,11 +1796,10 @@ impl PlanePass {
+@@ -1872,11 +1831,10 @@ impl PlanePass {
      }
  
      fn make(steps: bool, format: DXGI_FORMAT) -> windows::core::Result<PlanePipeline> {
@@ -590,7 +590,7 @@ index da25b39cf..0e204f34f 100644
          let code = |bytes: &[u8]| D3D12_SHADER_BYTECODE {
              pShaderBytecode: bytes.as_ptr().cast(),
              BytecodeLength: bytes.len(),
-@@ -5158,39 +5116,17 @@ impl Host {
+@@ -5282,39 +5240,17 @@ impl Host {
      }
  
      fn make_card_work(&self) -> windows::core::Result<CardWork> {
@@ -634,7 +634,7 @@ index da25b39cf..0e204f34f 100644
              let pso: ID3D12PipelineState = self.device.CreateComputePipelineState(&D3D12_COMPUTE_PIPELINE_STATE_DESC {
                  pRootSignature: std::mem::transmute_copy(&root),
                  CS: D3D12_SHADER_BYTECODE {
-@@ -10886,7 +10822,7 @@ void main() {
+@@ -11211,7 +11147,7 @@ void main() {
              eprintln!("queue2_tests: skipped, the copy is not in the card's memory (VICTORY_CARD_BUFFERS_MIN_MB=1)");
              return;
          }
@@ -643,7 +643,7 @@ index da25b39cf..0e204f34f 100644
          // SAFETY: the shader's own root signature; plain creation.
          let (root, pso): (ID3D12RootSignature, ID3D12PipelineState) = unsafe {
              let root: ID3D12RootSignature = host.device.CreateRootSignature(0, &code).expect("a root signature");
-@@ -11048,7 +10984,7 @@ void main() {
+@@ -11373,7 +11309,7 @@ void main() {
              eprintln!("queue2_tests: skipped, the copy is not in the card's memory (VICTORY_CARD_BUFFERS_MIN_MB=1)");
              return;
          }
@@ -653,7 +653,7 @@ index da25b39cf..0e204f34f 100644
          let (root, pso): (ID3D12RootSignature, ID3D12PipelineState) = unsafe {
              let root: ID3D12RootSignature = host.device.CreateRootSignature(0, &code).expect("a root signature");
 diff --git a/crates/victory-gpu/src/indirect.rs b/crates/victory-gpu/src/indirect.rs
-index d6f3ff799..02549b8b7 100644
+index 5457f3100..32b0e1d91 100644
 --- a/crates/victory-gpu/src/indirect.rs
 +++ b/crates/victory-gpu/src/indirect.rs
 @@ -4,9 +4,10 @@
@@ -683,7 +683,7 @@ index d6f3ff799..02549b8b7 100644
  use crate::host::{HostList, host, transition};
  
  const SOURCE: &str = r#"
-@@ -294,42 +293,14 @@ fn make_for(device: &ID3D12Device) -> windows::core::Result<Clamp> {
+@@ -301,42 +300,14 @@ fn make_for(device: &ID3D12Device) -> windows::core::Result<Clamp> {
  /// The clamp compiled from `source` (ours, or in the benchmark the one it
  /// replaced).
  fn make_from(device: &ID3D12Device, source: &str) -> windows::core::Result<Clamp> {
@@ -733,7 +733,7 @@ index d6f3ff799..02549b8b7 100644
          let root: ID3D12RootSignature = device.CreateRootSignature(0, bytes)?;
          let pso = device.CreateComputePipelineState(&D3D12_COMPUTE_PIPELINE_STATE_DESC {
              pRootSignature: std::mem::transmute_copy(&root),
-@@ -1246,38 +1217,7 @@ void main() {
+@@ -1616,38 +1587,7 @@ void main() {
      }
  
      fn compile_cs(device: &ID3D12Device, source: &str) -> windows::core::Result<Clamp> {
@@ -773,7 +773,7 @@ index d6f3ff799..02549b8b7 100644
      }
  
      /// The compare of copies in the card's memory (`crate::host`), on the
-@@ -2625,7 +2565,7 @@ mod bare_cost {
+@@ -2996,7 +2936,7 @@ mod bare_cost {
      use windows::Win32::Graphics::Dxgi::Common::*;
      use windows::Win32::Graphics::Dxgi::*;
      use windows::Win32::System::Threading::{CreateEventW, INFINITE, WaitForSingleObject};
@@ -782,7 +782,7 @@ index d6f3ff799..02549b8b7 100644
  
      use crate::host::{compile, transition};
  
-@@ -2848,12 +2788,12 @@ void work() {
+@@ -3219,12 +3159,12 @@ void work() {
          /// The default adapter, as the layer takes it; `None` without one
          /// or on a software adapter.
          fn new() -> Option<Self> {
@@ -894,10 +894,10 @@ index 00b7eb689..bc6931160 100644
  pub mod frame;
  #[cfg_attr(not(windows), allow(dead_code))]
 diff --git a/crates/victory-gpu/src/resource.rs b/crates/victory-gpu/src/resource.rs
-index 7dd79f06d..efe5f0407 100644
+index 93f0d8810..ae3672d49 100644
 --- a/crates/victory-gpu/src/resource.rs
 +++ b/crates/victory-gpu/src/resource.rs
-@@ -3770,7 +3770,6 @@ mod tests {
+@@ -3881,7 +3881,6 @@ mod tests {
          use windows::Win32::Graphics::Direct3D::D3D_PRIMITIVE_TOPOLOGY;
          use windows::Win32::Graphics::Direct3D12::*;
          use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT, DXGI_SAMPLE_DESC};
@@ -905,7 +905,7 @@ index 7dd79f06d..efe5f0407 100644
          let Some(host) = crate::host::host() else {
              return; // no host GPU here
          };
-@@ -3959,8 +3958,8 @@ float4 corner(uint i : SV_VertexID) : SV_Position {
+@@ -4070,8 +4069,8 @@ float4 corner(uint i : SV_VertexID) : SV_Position {
  }
  float4 lit() : SV_Target { return 1.0; }
  "#;

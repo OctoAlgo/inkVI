@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: desp <me@desp.lol>
 Date: Wed, 25 Nov 2026 16:27:14 +0100
-Subject: [PATCH 01/37] Shaders: the code table starts after the instructions
+Subject: [PATCH 01/38] Shaders: the code table starts after the instructions
  (port of Marvisak/VIctory#2143)
 
 The table code_dword reads was the program's code from the lowest offset
@@ -31,10 +31,10 @@ Kit-Licence: GPL-3.0
  1 file changed, 49 insertions(+), 7 deletions(-)
 
 diff --git a/crates/victory-shader/src/emit/lower.rs b/crates/victory-shader/src/emit/lower.rs
-index ad91c1251..705b25a47 100644
+index 73de93a95..829446100 100644
 --- a/crates/victory-shader/src/emit/lower.rs
 +++ b/crates/victory-shader/src/emit/lower.rs
-@@ -1303,6 +1303,23 @@ fn unsupported(offset: usize, what: Why) -> Stop {
+@@ -1558,6 +1558,23 @@ fn unsupported(offset: usize, what: Why) -> Stop {
      Stop::Fail(ShaderError::Unsupported { offset, what })
  }
  
@@ -58,7 +58,7 @@ index ad91c1251..705b25a47 100644
  impl<'a> Lower<'a> {
      fn new(x: &'a Parts<'a>, bad: &'a HashMap<Value, Why>) -> Self {
          let p = x.p;
-@@ -1663,22 +1680,22 @@ impl<'a> Lower<'a> {
+@@ -1918,22 +1935,22 @@ impl<'a> Lower<'a> {
          let (g, base, len) = match self.code_table {
              Some(t) => t,
              None => {
@@ -87,7 +87,7 @@ index ad91c1251..705b25a47 100644
                  let code = &self.x.native.code;
                  let words: Vec<u32> = code
                      .get(first as usize..)
-@@ -11688,7 +11705,7 @@ fn interp_mode(kind: Barycentric) -> Option<u8> {
+@@ -11943,7 +11960,7 @@ fn interp_mode(kind: Barycentric) -> Option<u8> {
  
  #[cfg(test)]
  mod tests {
@@ -96,7 +96,7 @@ index ad91c1251..705b25a47 100644
      use crate::native::{
          ComputeIo, HwStage, NativeProgram, ResourceType, RootParam, RootType, StageIo, UsedResource,
      };
-@@ -11696,6 +11713,31 @@ mod tests {
+@@ -11951,6 +11968,31 @@ mod tests {
  
      const S_ENDPGM: u32 = 0xBF81_0000;
  

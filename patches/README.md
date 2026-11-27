@@ -3,7 +3,8 @@
 Applied in this order on the pinned base (`../BASE`) by `build.sh`. Each patch carries `Kit-Source:` and
 `Kit-Licence:` trailers; squashed PR patches carry the PR author as the commit author.
 v0.2 dropped v0.1's 0012 (#927) and 0013 (#1002), both in fork main now, and renumbered the rest in order;
-0037 replaces v0.1's resolution patch 0039 (`../docs/rebase.md`).
+0037 replaces v0.1's resolution patch 0039 (`../docs/rebase.md`). v0.2.1 (base 4c6046614) drops nothing: 0037 is now
+the resolution on 4c6046614 (it replaces the one on e4245f3c1), and 0038 (VICTORY_DT_MAX) is new.
 
 | # | patch | subject | source | licence |
 |---|-------|---------|--------|---------|
@@ -43,4 +44,5 @@ v0.2 dropped v0.1's 0012 (#927) and 0013 (#1002), both in fork main now, and ren
 | 0034 | `0034-own-pipeline-watch.patch` | pipeline workers' watch line + VICTORY_PIPELINE_PRIORITY=normal (dark-cell hunt) | own (diagnostics + VICTORY_PIPELINE_PRIORITY) | GPL-3.0 |
 | 0035 | `0035-own-pipeline-wait-early.patch` | VICTORY_PIPELINE_WAIT_EARLY_MS: a pipeline's first draw waits for it while early pipelines are queued (dark-ce | own (dark-cell fix, step 1) | GPL-3.0 |
 | 0036 | `0036-own-pipeline-wait-first.patch` | the first-draw wait for every pipeline, renamed VICTORY_PIPELINE_WAIT_FIRST_MS | own (dark-cell fix: VICTORY_PIPELINE_WAIT_FIRST_MS) | GPL-3.0 |
-| 0037 | `0037-own-resolution-e4245f3c1.patch` | Resolution: the fork-main conflicts of this series on e4245f3c1 | own (merge-time conflict resolutions, linearised) | GPL-3.0 |
+| 0037 | `0037-own-resolution-4c6046614.patch` | Resolution: the fork-main conflicts of this series on 4c6046614 | own (merge-time conflict resolutions, linearised) | GPL-3.0 |
+| 0038 | `0038-own-dt-max.patch` | VICTORY_DT_MAX=<seconds>: raise the game step's 1/15 s ceiling (real-time game speed below 15 fps; off by default) | own (opt-in; untested under driving/combat, see docs/known-issues.md) | GPL-3.0 |

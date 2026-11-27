@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Octo <180629317+OctoAlgo@users.noreply.github.com>
 Date: Thu, 26 Nov 2026 13:21:11 +0100
-Subject: [PATCH 34/37] pipeline workers' watch line +
+Subject: [PATCH 34/38] pipeline workers' watch line +
  VICTORY_PIPELINE_PRIORITY=normal (dark-cell hunt)
 
 Every 2 s while pipelines are queued: queue lengths, made/loaded/started_early,
@@ -45,10 +45,10 @@ index 8806c2f14..768184855 100644
      fn drop(&mut self) {
          CALLS
 diff --git a/crates/victory-gpu/src/pipeline/make.rs b/crates/victory-gpu/src/pipeline/make.rs
-index 6b6f1796c..b00e76db9 100644
+index 48069a4a1..e300c864f 100644
 --- a/crates/victory-gpu/src/pipeline/make.rs
 +++ b/crates/victory-gpu/src/pipeline/make.rs
-@@ -417,15 +417,24 @@ fn workers() -> bool {
+@@ -443,15 +443,24 @@ fn workers() -> bool {
          for i in 0..workers {
              let spawned = std::thread::Builder::new()
                  .name(format!("victory-pipelines-{i}"))
@@ -79,7 +79,7 @@ index 6b6f1796c..b00e76db9 100644
                          if WAITING.fetch_sub(1, Ordering::Relaxed) == 1 {
                              drained();
                          } else {
-@@ -439,10 +448,77 @@ fn workers() -> bool {
+@@ -465,10 +474,77 @@ fn workers() -> bool {
                  running = true;
              }
          }

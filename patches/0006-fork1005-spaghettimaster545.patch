@@ -2,7 +2,7 @@ From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: SpaghettiMaster545
  <74583115+SpaghettiMaster545@users.noreply.github.com>
 Date: Tue, 24 Nov 2026 20:25:14 +0100
-Subject: [PATCH 06/37] xmem: tell the GPU side of an unmapped view after
+Subject: [PATCH 06/38] xmem: tell the GPU side of an unmapped view after
  unmapping it
 
 unmap() told victory_gpu that a view's memory changed before it unmapped

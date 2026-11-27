@@ -59,3 +59,44 @@ Tests: v0.1's own test code did not compile on Windows (HostShader initialisers 
 without `half_views`, a Flight / Card field, `compile()` calls with `s!()`); fixed in 0037. Native
 `cargo test -p victory-shader --lib`: 209 passed, 3 ignored; `cargo check --tests` for victory-gpu, victory-hle,
 victory-shader, victory (Windows target): no errors.
+
+## v0.2 -> v0.2.1: e4245f3c1 -> 4c6046614 (fork main of 2026-11-26 23:15 UTC)
+
+Fork main between (17 commits): #1320 (split submissions give their tables' dynamic slots back), #1321, #1324 (an
+empty commit: already in e4245f3c1), #1336, #1353, #1366, #1376, #1380, #1367, #1392, #1352, #1312, and fxceless's
+LDS-flag regions (`VICTORY_LDS_FLAGS`, on), scratch spare cap, raw loads by the dwords read, `VICTORY_SHADER_OPT`
+bit 128 (off), `VICTORY_CARD_HASH_WIDE` and `VICTORY_TILES_SMALL_WHEN_FULL_MB=512` by default, README. The whole range
+up to the then tip b1d777a80 was audited before anything was built (no network, process, file or build-script
+changes outside tests and the shader cache's staging file; nothing suspicious).
+
+Not taken yet: b1d777a80 (2026-11-27 00:06 UTC, the tip when v0.2.1 was made). One 4,700-line hand-merge: wide raw
+loads on by default and other translator changes (every shader translated again), a second paired-wave64 lowering
+(#1397) beside our #854/#993 one, and eight switches turned on by default that the kit runs on #995's clamp and has
+not measured (`VICTORY_CLAMP_LEAN`, `_WINDOW`, `GATHER_SEGMENTS`, `GATHER_DISPATCHES`, `WINDOW_UPLOAD`,
+`CARD_WINDOWS_MB=1280`, `HEAP_LOCKS`, `BAKE_SOURCES=full`). Its trial merge into the series: 83 conflict hunks in 13
+files (4c6046614: 26 in 4). It is the next round, with picture checks.
+
+Made as v0.2 was: one merge of 4c6046614 into the v0.2 series (26 conflict hunks in draw.rs, host.rs, indirect.rs,
+pipeline/make.rs), then 0001-0036 cherry-picked onto 4c6046614 with `-X theirs` and one resolution commit whose tree
+is the merge's (0037, replacing the one on e4245f3c1). The proof build of `build.sh` gives the same tree.
+- Dropped: none (no source of a kit patch is in the range; checked by PR number, switch name and the touched files).
+- Patches whose own lines changed: 0005, 0012, 0015 and 0035, only in lines they remove where fork main changed
+  those lines (the picked side wins, 0037 brings fork main's change back). Their added lines are as in v0.2.
+- Kept ours, unchanged from v0.2 (fork main's versions do not supersede them yet: its clamp window, lean clamps and
+  gather segments are still off at 4c6046614; `VICTORY_DIRTY_4K` is unchanged).
+- Not taken: #1352 `VICTORY_SPREAD_LEAN` (off in fork main). It is a lean form of upstream's spread across z, which
+  the kit replaced by #993's split dispatches; its clamp layout (bits 3 and 5, a predicate word), the spread record
+  counters (budget words 3-5) and its tests are left out. The switch does nothing in the kit.
+- Combined with ours:
+  - #1312 (a dispatch waits for its compute pipeline until it is made, `VICTORY_PIPELINE_COMPUTE_WAIT`, on) beside
+    our first-draw wait (`VICTORY_PIPELINE_WAIT_FIRST_MS`, 0035/0036): a compute pipeline not made yet is made at
+    once; a draw's first use waits up to WAIT_FIRST_MS; otherwise the frame's budget as before.
+  - #1353 (a panicking pipeline build finishes its queue entry) around our diagnostics' slow-pipeline note (0015).
+  - #1367 (a small first scratch chunk may take a kept 4 MiB one) on our chunks with #995's card-memory field; our
+    `VICTORY_SCRATCH_SPARE_MB` reader kept (same name and meaning as fork main's, 128 MiB unless set).
+  - #1336: our alias read of a placed view takes the pinned source.
+- Taken as they are: #1320, #1321, #1366, #1376, #1380, #1392, the translator changes and the new defaults.
+- New patch 0038 (`VICTORY_DT_MAX`, own, off by default), squashed from the play tree's dtmax commits.
+
+Tests: `cargo check --tests` (Windows target) for victory, victory-gpu, victory-hle, victory-shader: no errors (also
+victory-gpu/victory-hle with `diagnostics`). Native `cargo test -p victory-shader --lib`: 210 passed, 3 ignored.

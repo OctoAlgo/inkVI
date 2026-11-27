@@ -1,38 +1,52 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Octo <180629317+OctoAlgo@users.noreply.github.com>
 Date: Wed, 25 Nov 2026 19:42:54 +0100
-Subject: [PATCH 15/37] name the host pipelines that take long to make
+Subject: [PATCH 15/38] name the host pipelines that take long to make
  (SLOW-PIPELINE log lines; missing() names the shaders being made)
 
 Kit-Source: own (diagnostics build only)
 Kit-Licence: GPL-3.0
 ---
- crates/victory-gpu/src/pipeline/make.rs | 65 ++++++++++++++++++++++++-
- 1 file changed, 64 insertions(+), 1 deletion(-)
+ crates/victory-gpu/src/pipeline/make.rs | 80 ++++++++++++++++++++-----
+ 1 file changed, 65 insertions(+), 15 deletions(-)
 
 diff --git a/crates/victory-gpu/src/pipeline/make.rs b/crates/victory-gpu/src/pipeline/make.rs
-index e6e76867a..6b6f1796c 100644
+index c72ab8a71..48069a4a1 100644
 --- a/crates/victory-gpu/src/pipeline/make.rs
 +++ b/crates/victory-gpu/src/pipeline/make.rs
-@@ -102,6 +102,8 @@ impl Pending {
+@@ -103,26 +103,17 @@ impl Pending {
      }
  
      fn make(&self) {
+-        self.make_with(|| {
 +        #[cfg(feature = "diagnostics")]
 +        let slow = slow::begin(&self.key, &self.shaders, self.graphics.is_some());
-         self.made.get_or_init(|| {
++        self.made.get_or_init(|| {
              if let Some(hash) = denied(&self.shaders) {
                  tracing::warn!(hash, shaders = ?self.shaders, "pipeline not built: its shader is in VICTORY_DENY_PIPELINES");
-@@ -109,6 +111,8 @@ impl Pending {
+                 return None;
              }
              HostPipeline::new(&self.shaders, self.graphics.as_deref())
          });
+-    }
+-
+-    fn make_with(&self, build: impl FnOnce() -> Option<HostPipeline>) {
+-        self.made.get_or_init(|| {
+-            // A failed translation must complete this queue entry and wake its waiters.
+-            match catch_unwind(AssertUnwindSafe(build)) {
+-                Ok(pipeline) => pipeline,
+-                Err(_) => {
+-                    tracing::warn!(shaders = ?self.shaders, "host pipeline build panicked");
+-                    None
+-                }
+-            }
+-        });
 +        #[cfg(feature = "diagnostics")]
 +        slow::end(slow, self.made.get().is_some_and(|m| m.is_some()));
          let (lock, done) = &DONE;
          let _held = lock.lock().unwrap_or_else(|e| e.into_inner());
          done.notify_all();
-@@ -121,7 +125,7 @@ impl Pending {
+@@ -135,7 +126,7 @@ impl Pending {
  pub(crate) fn missing(p: &Pending) -> Option<String> {
      match p.made.get() {
          Some(Some(_)) => None,
@@ -41,7 +55,7 @@ index e6e76867a..6b6f1796c 100644
          Some(None) => {
              let failed: Vec<String> = p
                  .shaders
-@@ -533,3 +537,62 @@ mod tests {
+@@ -592,3 +583,62 @@ mod tests {
          assert!(queue.pop().is_none());
      }
  }

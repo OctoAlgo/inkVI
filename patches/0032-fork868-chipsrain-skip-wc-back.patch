@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Octo <180629317+OctoAlgo@users.noreply.github.com>
 Date: Thu, 26 Nov 2026 09:05:22 +0100
-Subject: [PATCH 32/37] fork #868 VICTORY_SKIP_WC_BACK (census.rs from
+Subject: [PATCH 32/38] fork #868 VICTORY_SKIP_WC_BACK (census.rs from
  fef959240, hand-ported onto our relay / in-flight / merge piece loops; census
  hook renamed census_reserved)
 
@@ -446,10 +446,10 @@ index 000000000..a9e71c2dd
 +    }
 +}
 diff --git a/crates/victory-gpu/src/host.rs b/crates/victory-gpu/src/host.rs
-index a1b000f01..7c3973f41 100644
+index e555e2209..0bb9cac91 100644
 --- a/crates/victory-gpu/src/host.rs
 +++ b/crates/victory-gpu/src/host.rs
-@@ -9321,7 +9321,9 @@ impl Host {
+@@ -9363,7 +9363,9 @@ impl Host {
                              continue;
                          }
                          let (lo, hi) = r.shadow.card_piece(&r.span, p);
@@ -460,7 +460,7 @@ index a1b000f01..7c3973f41 100644
                              pieces.push((r.shadow.clone(), lo, hi, total));
                              piece_numbers.push((copy, r.span.first + p));
                              total += (hi - lo) as u64;
-@@ -9943,7 +9945,9 @@ impl Host {
+@@ -9985,7 +9987,9 @@ impl Host {
                              continue;
                          }
                          let (lo, hi) = r.shadow.card_piece(&r.span, p);
@@ -471,7 +471,7 @@ index a1b000f01..7c3973f41 100644
                              continue;
                          }
                          let from = inflight_piece_from(&r.span, p);
-@@ -10323,7 +10327,9 @@ impl Host {
+@@ -10365,7 +10369,9 @@ impl Host {
                      continue;
                  }
                  let (lo, hi) = r.shadow.card_piece(&r.span, p);

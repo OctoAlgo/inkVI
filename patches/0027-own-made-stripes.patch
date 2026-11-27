@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Octo <180629317+OctoAlgo@users.noreply.github.com>
 Date: Wed, 25 Nov 2026 22:42:18 +0100
-Subject: [PATCH 27/37] Host heap slots behind striped locks
+Subject: [PATCH 27/38] Host heap slots behind striped locks
  (VICTORY_MADE_STRIPES; 1 = one lock as before)
 
 The host heap's `made` keys move from one Mutex<Vec<u64>> to one atomic key

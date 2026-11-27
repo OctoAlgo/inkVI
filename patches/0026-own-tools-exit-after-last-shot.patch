@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Octo <180629317+OctoAlgo@users.noreply.github.com>
 Date: Thu, 26 Nov 2026 02:27:48 +0100
-Subject: [PATCH 26/37] VICTORY_EXIT_AFTER_SHOTS waits for the last listed
+Subject: [PATCH 26/38] VICTORY_EXIT_AFTER_SHOTS waits for the last listed
  frame's own shot
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>

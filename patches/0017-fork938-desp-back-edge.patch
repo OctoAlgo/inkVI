@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: desp <me@desp.lol>
 Date: Wed, 25 Nov 2026 04:36:42 -0500
-Subject: [PATCH 17/37] Shaders: one back edge per block, for vkd3d-proton
+Subject: [PATCH 17/38] Shaders: one back edge per block, for vkd3d-proton
 
 The console flow's nested loops leave an inner loop's latch straight to
 the outer loop's header: one block that branches back to two headers.
@@ -30,7 +30,7 @@ Kit-Licence: GPL-3.0
  1 file changed, 139 insertions(+), 6 deletions(-)
 
 diff --git a/crates/victory-shader/src/emit/bitcode.rs b/crates/victory-shader/src/emit/bitcode.rs
-index 96227c1fb..efe46d763 100644
+index 032673c68..951830fd3 100644
 --- a/crates/victory-shader/src/emit/bitcode.rs
 +++ b/crates/victory-shader/src/emit/bitcode.rs
 @@ -631,6 +631,13 @@ impl Module {
@@ -160,7 +160,7 @@ index 96227c1fb..efe46d763 100644
              }
          }
          let layout: Vec<usize> = post.into_iter().filter(|&b| fold[b].is_none()).collect();
-@@ -1393,6 +1445,87 @@ mod tests {
+@@ -1399,6 +1451,87 @@ mod tests {
          assert!(!m.write().is_empty());
      }
  

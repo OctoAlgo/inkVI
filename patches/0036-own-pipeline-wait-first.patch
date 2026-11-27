@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Octo <180629317+OctoAlgo@users.noreply.github.com>
 Date: Thu, 26 Nov 2026 13:36:56 +0100
-Subject: [PATCH 36/37] the first-draw wait for every pipeline, renamed
+Subject: [PATCH 36/38] the first-draw wait for every pipeline, renamed
  VICTORY_PIPELINE_WAIT_FIRST_MS
 
 r9b2 (empty pipeline cache: no early list) rendered the dark cell too, so the
@@ -16,10 +16,10 @@ Kit-Licence: GPL-3.0
  1 file changed, 9 insertions(+), 7 deletions(-)
 
 diff --git a/crates/victory-gpu/src/pipeline/make.rs b/crates/victory-gpu/src/pipeline/make.rs
-index 61bd1297e..d7a2a737c 100644
+index d9dbf03a8..19688e811 100644
 --- a/crates/victory-gpu/src/pipeline/make.rs
 +++ b/crates/victory-gpu/src/pipeline/make.rs
-@@ -178,7 +178,7 @@ pub(crate) fn ready(p: &Arc<Pending>) -> Option<&HostPipeline> {
+@@ -179,7 +179,7 @@ pub(crate) fn ready(p: &Arc<Pending>) -> Option<&HostPipeline> {
      if p.made.get().is_none() {
          start(p, REQUESTED);
          let early = early_wait();
@@ -28,7 +28,7 @@ index 61bd1297e..d7a2a737c 100644
              wait_once(p, early);
          } else {
              wait(p, crate::frame::current());
-@@ -196,24 +196,26 @@ pub(crate) fn ready(p: &Arc<Pending>) -> Option<&HostPipeline> {
+@@ -197,24 +197,26 @@ pub(crate) fn ready(p: &Arc<Pending>) -> Option<&HostPipeline> {
      made
  }
  

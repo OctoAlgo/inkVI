@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Pilote Production <75377040+PiloteCode@users.noreply.github.com>
 Date: Wed, 25 Nov 2026 19:38:53 +0100
-Subject: [PATCH 12/37] merge fork PRs #854 + #993 (PiloteCode: wave64 programs
+Subject: [PATCH 12/38] merge fork PRs #854 + #993 (PiloteCode: wave64 programs
  in a paired form on 32-lane GPUs, geometry programs, loops as the console
  runs them, split dispatches)
 
@@ -16,9 +16,9 @@ Kit-Source: victory-fork PRs #854 + #993 (PiloteCode), squashed together
 Kit-Licence: GPL-3.0
 ---
  apps/victory/src/translate.rs                 |  122 +-
- crates/victory-gpu/src/draw.rs                |  247 +-
+ crates/victory-gpu/src/draw.rs                |  253 +-
  crates/victory-gpu/src/host.rs                |    1 +
- crates/victory-gpu/src/indirect.rs            |  230 +-
+ crates/victory-gpu/src/indirect.rs            |  237 +-
  crates/victory-gpu/src/lib.rs                 |    2 +
  crates/victory-gpu/src/loop_notes.rs          |  141 +
  crates/victory-gpu/src/pipeline.rs            |   16 +-
@@ -40,7 +40,7 @@ Kit-Licence: GPL-3.0
  crates/victory-shader/src/emit/link.rs        |  244 ++
  crates/victory-shader/src/emit/loop_tests.rs  |  380 +++
  crates/victory-shader/src/emit/loops.rs       |  294 ++
- crates/victory-shader/src/emit/lower.rs       | 2411 ++++++++---------
+ crates/victory-shader/src/emit/lower.rs       | 2407 ++++++++---------
  crates/victory-shader/src/emit/mod.rs         |  996 ++++++-
  crates/victory-shader/src/emit/rect.rs        |    1 +
  crates/victory-shader/src/emit/regions.rs     |  175 ++
@@ -59,7 +59,7 @@ Kit-Licence: GPL-3.0
  crates/victory-shader/src/native.rs           |  143 +-
  crates/victory-shader/src/resource.rs         |   32 +
  docs/fork-ray-tracing.md                      |   23 +-
- 44 files changed, 9330 insertions(+), 2296 deletions(-)
+ 44 files changed, 9328 insertions(+), 2307 deletions(-)
  create mode 100644 crates/victory-gpu/src/loop_notes.rs
  create mode 100644 crates/victory-shader/src/emit/descriptor_data.rs
  create mode 100644 crates/victory-shader/src/emit/descriptor_tests.rs
@@ -341,7 +341,7 @@ index 26bb32690..d6d3717f0 100644
      }
      // Root constants are listed as a CBV, read straight from the SGPRs.
 diff --git a/crates/victory-gpu/src/draw.rs b/crates/victory-gpu/src/draw.rs
-index b2ba5c01c..659f3c4f6 100644
+index b79694645..2f199aa54 100644
 --- a/crates/victory-gpu/src/draw.rs
 +++ b/crates/victory-gpu/src/draw.rs
 @@ -2041,18 +2041,15 @@ impl State {
@@ -424,7 +424,7 @@ index b2ba5c01c..659f3c4f6 100644
          list.prof_draw(true);
          DISPATCHED.fetch_add(1, Ordering::Relaxed);
          if self.ambient(list, p) {
-@@ -5484,19 +5518,18 @@ impl State {
+@@ -5484,25 +5518,18 @@ impl State {
              },
              None => None,
          };
@@ -436,7 +436,13 @@ index b2ba5c01c..659f3c4f6 100644
 -            .flatten()
 -            .and_then(|(param, index)| host_spread_signature(&p.root, param, index));
 -        let is_spread = spread.is_some();
--        let Some(signature) = spread.or_else(|| {
+-        // Lean (`VICTORY_SPREAD_LEAN`): the records within 65,535 groups go
+-        // through the plain dispatch signature, and the spread signature
+-        // runs only under a predicate the clamp sets when a record passes it.
+-        let plain = (is_spread && max > 0 && max <= crate::indirect::LEAN_RECORDS && spread_lean_on())
+-            .then(|| host_signature(DISPATCH, 12))
+-            .flatten();
+-        let Some(signature) = spread.clone().or_else(|| {
 -            matches!(kind, DRAW | INDEXED | DISPATCH | MESH)
 +        // A program that counts its groups in x from a base the host gives
 +        // it: each record is clamped into several, each setting its first
@@ -455,7 +461,7 @@ index b2ba5c01c..659f3c4f6 100644
              why("no host signature");
              return false;
          };
-@@ -5527,7 +5560,8 @@ impl State {
+@@ -5533,7 +5560,8 @@ impl State {
          // A run of calls whose records one pass clamps
          // (`crate::indirect::batch_mode`); one it cannot take is clamped
          // alone below.
@@ -465,7 +471,7 @@ index b2ba5c01c..659f3c4f6 100644
              self.window = None;
              args.refresh(list, arguments, len);
              if let Some((s, at)) = &counter {
-@@ -5727,9 +5761,7 @@ impl State {
+@@ -5733,9 +5761,7 @@ impl State {
                  let count_arg = counter.as_ref().map(|(s, at)| (&s.buffer, s.offset(*at)));
                  // More than the record asked for: a window clamped ahead,
                  // whose unfilled slots must not spend the list's budget.
@@ -476,8 +482,8 @@ index b2ba5c01c..659f3c4f6 100644
                  let bounded = if windowed && records > 1 {
                      crate::indirect::bound_ahead(list, (&args.buffer, offset), (kind, step, records))
                  } else if let Some((dst, at, opened)) = (crate::indirect::clamp_window()
-@@ -5743,9 +5775,7 @@ impl State {
-                     window_at = Some((at, opened));
+@@ -5755,9 +5781,7 @@ impl State {
+                     lean = Some((pred, spread_at));
                      Some(dst)
                  } else {
 -                    // (A spread dispatch is never windowed: `windowed` is
@@ -487,7 +493,7 @@ index b2ba5c01c..659f3c4f6 100644
                  };
                  let Some(bounded) = bounded else {
                      self.window = None;
-@@ -5820,6 +5850,10 @@ impl State {
+@@ -5832,6 +5856,10 @@ impl State {
          list.note_op(|| {
              self.op_text(format!("indirect kind {kind} max {max} at {arguments:#x}"), kind == DISPATCH)
          });
@@ -498,7 +504,7 @@ index b2ba5c01c..659f3c4f6 100644
          if kind == MESH {
              self.mesh_scissor(list, true);
          }
-@@ -5827,14 +5861,27 @@ impl State {
+@@ -5839,14 +5867,27 @@ impl State {
          // SAFETY: an open list with everything set; the scratch buffer and
          // host copies are kept alive by the list, and the signature is cached.
          unsafe {
@@ -534,7 +540,7 @@ index b2ba5c01c..659f3c4f6 100644
          };
          list.prof_draw(true);
          if kind == MESH {
-@@ -5991,6 +6038,130 @@ pub(crate) static AMPLIFIED: AtomicU64 = AtomicU64::new(0);
+@@ -6006,6 +6047,130 @@ pub(crate) static AMPLIFIED: AtomicU64 = AtomicU64::new(0);
  /// Waits recorded where a run of them ends ([`State::amplified_reads_done`]).
  pub(crate) static AMPLIFIED_WAITS: AtomicU64 = AtomicU64::new(0);
  
@@ -666,10 +672,10 @@ index b2ba5c01c..659f3c4f6 100644
  /// `stride` bytes apart (no root arguments, so no root signature), made
  /// once.
 diff --git a/crates/victory-gpu/src/host.rs b/crates/victory-gpu/src/host.rs
-index b3c46b411..fc76a0896 100644
+index 3b54847fc..8ccfec0bd 100644
 --- a/crates/victory-gpu/src/host.rs
 +++ b/crates/victory-gpu/src/host.rs
-@@ -15933,6 +15933,7 @@ impl Meter {
+@@ -16012,6 +16012,7 @@ impl Meter {
              crate::inplace::frame_line(frames, copy_mb, texture_mb);
              #[cfg(feature = "diagnostics")]
              {
@@ -678,7 +684,7 @@ index b3c46b411..fc76a0896 100644
                  for (why, n) in drops.iter().take(40) {
                      tracing::info!(
 diff --git a/crates/victory-gpu/src/indirect.rs b/crates/victory-gpu/src/indirect.rs
-index 058f05a50..afce58fa3 100644
+index 891d729c7..6725091e4 100644
 --- a/crates/victory-gpu/src/indirect.rs
 +++ b/crates/victory-gpu/src/indirect.rs
 @@ -152,6 +152,10 @@ void clamp_record(uint kind, uint stride, uint src_at, uint dst_at, bool ahead)
@@ -692,7 +698,7 @@ index 058f05a50..afce58fa3 100644
  // Each group charges the budget once: the costs of its records go here,
  // one thread charges their sum, saturating as each record would in lane
  // order, and every thread then reads whether its own record fitted. A
-@@ -228,31 +232,14 @@ void main(uint3 id : SV_DispatchThreadID, uint gi : SV_GroupIndex) {
+@@ -233,31 +237,14 @@ void main(uint3 id : SV_DispatchThreadID, uint gi : SV_GroupIndex) {
              cost = 0;
          }
          draw_counts = uint2(count, instances);
@@ -732,24 +738,33 @@ index 058f05a50..afce58fa3 100644
              g = uint3(0, 0, 0);
          }
          cost = g.x * g.y * g.z * 64u;
-@@ -273,7 +260,7 @@ void main(uint3 id : SV_DispatchThreadID, uint gi : SV_GroupIndex) {
+@@ -278,7 +265,7 @@ void main(uint3 id : SV_DispatchThreadID, uint gi : SV_GroupIndex) {
      }
      costs[gi] = cost;
      GroupMemoryBarrierWithGroupSync();
 -    if (active && kind >= 2) {
 +    if (active && kind > 3) {
          // Diagnostics, in the budget buffer's next words (below): the
-         // largest group count a mesh or compute record asked for, and the
-         // groups asked in all.
-@@ -319,12 +306,19 @@ void main(uint3 id : SV_DispatchThreadID, uint gi : SV_GroupIndex) {
+         // largest group count a mesh or compute record asked for, the
+         // groups asked in all, and of the spread-eligible compute records
+@@ -333,14 +320,7 @@ void main(uint3 id : SV_DispatchThreadID, uint gi : SV_GroupIndex) {
          }
      }
      GroupMemoryBarrierWithGroupSync();
+-    // (An active thread's lane is below `n`, so its `fits` slot is set.)
+-    bool over = !active || fits[gi] == 0;
+-    if (lean && !over && row != 0u) {
+-        uint was;
+-        InterlockedOr(spread_any, 1u, was);
+-    }
+-    GroupMemoryBarrierWithGroupSync();
 -    if (gi == 0 && kind >= 2 && n > 0) {
 +    if (gi == 0 && kind > 3 && n > 0) {
          uint was;
          budget.InterlockedMax(4, largest_asked, was);
          budget.InterlockedAdd(8, all_asked, was);
+@@ -356,6 +336,13 @@ void main(uint3 id : SV_DispatchThreadID, uint gi : SV_GroupIndex) {
+         dst_args.Store2((records * 12u + 7u) & ~7u, uint2(spread_any != 0u ? 1u : 0u, 0u));
      }
      if (!active) {
 +        // The host runs every record of a split dispatch (the count is the
@@ -761,8 +776,8 @@ index 058f05a50..afce58fa3 100644
 +        }
          return;
      }
-     bool over = fits[gi] == 0;
-@@ -336,6 +330,19 @@ void main(uint3 id : SV_DispatchThreadID, uint gi : SV_GroupIndex) {
+     if (kind <= 1) {
+@@ -366,6 +353,19 @@ void main(uint3 id : SV_DispatchThreadID, uint gi : SV_GroupIndex) {
          for (uint off = 8; off < stride; off += 4) {
              dst_args.Store(dst_at + off, src_args.Load(src_at + off));
          }
@@ -782,7 +797,7 @@ index 058f05a50..afce58fa3 100644
      } else {
          if (over) {
              groups = uint3(0, 0, 0);
-@@ -455,16 +462,40 @@ fn make_clamp(device: &ID3D12Device, bytes: &[u8]) -> windows::core::Result<Clam
+@@ -495,16 +495,40 @@ fn make_clamp(device: &ID3D12Device, bytes: &[u8]) -> windows::core::Result<Clam
      }
  }
  
@@ -824,7 +839,7 @@ index 058f05a50..afce58fa3 100644
  /// Validates record alignment and returns the scratch byte size `stride * records`.
  fn validate_layout(
      (kind, stride, records): (u32, u32, u32),
-@@ -497,11 +528,9 @@ pub(crate) fn bound(
+@@ -537,11 +561,9 @@ pub(crate) fn bound(
      spec: (u32, u32, u32),
      spread: bool,
  ) -> Option<ID3D12Resource> {
@@ -837,9 +852,9 @@ index 058f05a50..afce58fa3 100644
 +    // What the clamped records take (a split dispatch's are bigger).
 +    let bytes = scratch_bytes(spec)?;
      let (c, budget, dst) = (clamp()?, list.budget()?, list.indirect_scratch(bytes)?);
-     clamp_into(list, c, &dst, budget, src, count, spec, false, spread).then_some(dst)
- }
-@@ -521,8 +550,8 @@ pub(crate) fn bound_ahead(
+     let mode = if spread { SPREAD_CLASSIC } else { SPREAD_OFF };
+     clamp_into(list, c, &dst, budget, src, count, spec, false, mode).then_some(dst)
+@@ -607,8 +629,8 @@ pub(crate) fn bound_ahead(
      src: (&ID3D12Resource, u64),
      spec: (u32, u32, u32),
  ) -> Option<ID3D12Resource> {
@@ -848,9 +863,9 @@ index 058f05a50..afce58fa3 100644
 +    validate_layout(spec, src.1, None)?;
 +    let bytes = scratch_bytes(spec)?;
      let (c, budget, dst) = (clamp()?, list.budget()?, list.indirect_scratch(bytes)?);
-     clamp_into(list, c, &dst, budget, src, None, spec, true, false).then_some(dst)
+     clamp_into(list, c, &dst, budget, src, None, spec, true, SPREAD_OFF).then_some(dst)
  }
-@@ -2614,7 +2643,12 @@ void main() {
+@@ -2704,7 +2726,12 @@ void main() {
          assert_eq!(validate_layout((2, 8, 1), 0, None), None);
          assert_eq!(validate_layout((10, 8, 1), 0, None), None);
          // Unknown kind.
@@ -864,7 +879,7 @@ index 058f05a50..afce58fa3 100644
          // Unaligned stride, source offset, or count offset.
          assert_eq!(validate_layout((0, 18, 1), 0, None), None);
          assert_eq!(validate_layout((0, 16, 1), 2, None), None);
-@@ -2889,6 +2923,128 @@ void main() {
+@@ -3271,6 +3298,128 @@ void main(uint3 gid : SV_GroupID) {
          assert_ne!(clamped_words[21], 0xDEAD_BEEF);
      }
  
@@ -993,7 +1008,7 @@ index 058f05a50..afce58fa3 100644
      /// WARP D3D12 test proving `BUDGET` saturates without 32-bit unsigned
      /// wraparound across >64 huge indexed-draw records (`count = None`), while
      /// preserving `StartIndexLocation`, `BaseVertexLocation`,
-@@ -4020,7 +4176,7 @@ void work() {
+@@ -4402,7 +4551,7 @@ void work() {
          heap_pairs: [[Option<ID3D12DescriptorHeap>; 2]; 2],
          tables: [D3D12_GPU_DESCRIPTOR_HANDLE; 2],
          targets: [D3D12_CPU_DESCRIPTOR_HANDLE; 2],
@@ -1473,10 +1488,10 @@ index e58593631..8f3b9d804 100644
  /// stream form (no input layout).
  ///
 diff --git a/crates/victory-gpu/src/resource.rs b/crates/victory-gpu/src/resource.rs
-index 46e4bde58..485d3d4ea 100644
+index 218e4b5a0..f9af89395 100644
 --- a/crates/victory-gpu/src/resource.rs
 +++ b/crates/victory-gpu/src/resource.rs
-@@ -2821,8 +2821,9 @@ static PLACED_RAW: std::sync::Mutex<std::collections::BTreeSet<(u64, [u32; 14])>
+@@ -2845,8 +2845,9 @@ static PLACED_RAW: std::sync::Mutex<std::collections::BTreeSet<(u64, [u32; 14])>
  #[cfg(windows)]
  static PLACED_TWINS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
  
@@ -1508,7 +1523,7 @@ index 60af00dad..8ed842f35 100644
      // VICTORY_RT_MISS (and every other switch the translator reads) is in
      // `translation_fingerprint`; only the warning is said here.
 diff --git a/crates/victory-shader/src/emit/bitcode.rs b/crates/victory-shader/src/emit/bitcode.rs
-index 34e44895b..e171e2935 100644
+index 196029ba7..b6f24a8f8 100644
 --- a/crates/victory-shader/src/emit/bitcode.rs
 +++ b/crates/victory-shader/src/emit/bitcode.rs
 @@ -30,6 +30,7 @@ enum TypeDef {
@@ -1544,10 +1559,10 @@ index 34e44895b..e171e2935 100644
      pub fn replace_const(&mut self, old: V, new: V) {
          if let (V::Const(o), V::Const(n)) = (old, new) {
 diff --git a/crates/victory-shader/src/emit/bitcode/opt.rs b/crates/victory-shader/src/emit/bitcode/opt.rs
-index 83ab973ae..50c234616 100644
+index ce1423781..888983088 100644
 --- a/crates/victory-shader/src/emit/bitcode/opt.rs
 +++ b/crates/victory-shader/src/emit/bitcode/opt.rs
-@@ -79,12 +79,16 @@ pub(crate) struct Usage {
+@@ -87,12 +87,16 @@ pub(crate) struct Usage {
      pub int64: bool,
      /// A typed load of several components from a UAV.
      pub typed_uav_loads: bool,
@@ -1564,7 +1579,7 @@ index 83ab973ae..50c234616 100644
  }
  
  /// What makes two instructions without an effect the same value.
-@@ -980,6 +984,7 @@ impl Module {
+@@ -1056,6 +1060,7 @@ impl Module {
          let mut u = Usage::default();
          let reached = self.reached();
          let wide = |ty: Ty| self.types[ty.0 as usize] == TypeDef::Int(64);
@@ -1572,7 +1587,7 @@ index 83ab973ae..50c234616 100644
          // The first field of a handle's annotation: its kind, with the UAV
          // bit; the second: the component type and count.
          let annotation = |h: V| -> Option<(i64, i64)> {
-@@ -1008,7 +1013,11 @@ impl Module {
+@@ -1084,7 +1089,11 @@ impl Module {
              for &i in blk.phis.iter().chain(&blk.body) {
                  let inst = &self.insts[i as usize];
                  u.int64 |= wide(inst.ty);
@@ -1585,7 +1600,7 @@ index 83ab973ae..50c234616 100644
                  let Op::Call(f, args) = &inst.op else {
                      continue;
                  };
-@@ -1021,6 +1030,8 @@ impl Module {
+@@ -1097,6 +1106,8 @@ impl Module {
                          Some((_, 0)) => u.heap_views = true,
                          _ => u.heap_samplers = true,
                      }
@@ -4636,7 +4651,7 @@ index 000000000..1dc7b9f3b
 +    }
 +}
 diff --git a/crates/victory-shader/src/emit/lower.rs b/crates/victory-shader/src/emit/lower.rs
-index 5c69c179b..ea850a770 100644
+index 3d6c81cec..c1a2b1a52 100644
 --- a/crates/victory-shader/src/emit/lower.rs
 +++ b/crates/victory-shader/src/emit/lower.rs
 @@ -17,7 +17,7 @@ use crate::gfx10::{Dpp, Fields, NULL, Operand};
@@ -5209,20 +5224,18 @@ index 5c69c179b..ea850a770 100644
 -        if (&before.0, before.1) == (&kind, firsts.len()) {
 -            settled = true;
 -            break;
--        }
--    }
++        if own.len() == before {
++            return own;
+         }
+     }
 -    if !settled {
 -        return Err((0, MIXED));
 -    }
 -    pass(&mut kind, &mut firsts, true)
-+        if own.len() == before {
-+            return own;
-+        }
-+    }
  }
  
  /// The mode of a group barrier the translation adds (host waves meeting):
-@@ -1131,6 +861,31 @@ thread_local! {
+@@ -1386,6 +1116,31 @@ thread_local! {
      static LOCAL_WAVES: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
      /// See [`with_local_waves_any`].
      static LOCAL_ANY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
@@ -5254,7 +5267,7 @@ index 5c69c179b..ea850a770 100644
  }
  
  /// As [`with_local_waves`], with every other use of a lane mask as a number
-@@ -1447,6 +1202,13 @@ fn half_input_partners(io: &StageIo, inputs: &[SigElement]) -> HashMap<u8, u8> {
+@@ -1702,6 +1457,13 @@ fn half_input_partners(io: &StageIo, inputs: &[SigElement]) -> HashMap<u8, u8> {
      partners
  }
  
@@ -5268,7 +5281,7 @@ index 5c69c179b..ea850a770 100644
  fn unsupported(offset: usize, what: Why) -> Stop {
      Stop::Fail(ShaderError::Unsupported { offset, what })
  }
-@@ -1478,8 +1240,15 @@ impl<'a> Lower<'a> {
+@@ -1733,8 +1495,15 @@ impl<'a> Lower<'a> {
              }
          }
          let mut s = Shader::new(x.native.stage == HwStage::Ps);
@@ -5284,7 +5297,7 @@ index 5c69c179b..ea850a770 100644
          let insts = || p.blocks.iter().flat_map(|b| &b.insts);
          let writes_uavs = insts().any(|i| {
              matches!(i.fields, Fields::Image { .. } | Fields::Buffer { .. })
-@@ -1495,7 +1264,25 @@ impl<'a> Lower<'a> {
+@@ -1750,7 +1519,25 @@ impl<'a> Lower<'a> {
          let mut exchange: Option<(u32, bool, Vec<bool>)> = None;
          // a console wave64 program in host waves of 32: the LDS dword of `wave_base`'s counter
          let mut halves: Option<u32> = None;
@@ -5311,7 +5324,7 @@ index 5c69c179b..ea850a770 100644
              s.threads = Some(cs.threads);
              s.lds_dwords = cs.lds_bytes() / 4;
              // Code reading other lanes needs the console's wave size and
-@@ -1799,6 +1586,7 @@ impl<'a> Lower<'a> {
+@@ -2054,6 +1841,7 @@ impl<'a> Lower<'a> {
              halves,
              wave_base: None,
              flat: None,
@@ -5319,7 +5332,7 @@ index 5c69c179b..ea850a770 100644
              no_barrier,
              fence_only,
              half_outputs: half_outputs(&x.native.io, &x.outputs),
-@@ -1827,7 +1615,26 @@ impl<'a> Lower<'a> {
+@@ -2082,7 +1870,26 @@ impl<'a> Lower<'a> {
              section_out: HashSet::new(),
              code_table: None,
              counters: HashMap::new(),
@@ -5346,7 +5359,7 @@ index 5c69c179b..ea850a770 100644
          };
          // `VICTORY_WAVE_UNIFORM` bit 2: again, with buffer loads through read-only views
          if wave_uniform() & 2 != 0
-@@ -1853,6 +1660,59 @@ impl<'a> Lower<'a> {
+@@ -2108,6 +1915,59 @@ impl<'a> Lower<'a> {
          l
      }
  
@@ -5406,7 +5419,7 @@ index 5c69c179b..ea850a770 100644
      /// The dword of the program's code at byte `byte` (a constant table
      /// the compiler appends to the code), as an internal constant array.
      // shortcut: an index outside the table reads its last dword (the
-@@ -2072,6 +1932,29 @@ impl<'a> Lower<'a> {
+@@ -2327,6 +2187,29 @@ impl<'a> Lower<'a> {
          }
      }
  
@@ -5436,7 +5449,7 @@ index 5c69c179b..ea850a770 100644
      /// A value a whole-wave section leaves, as DXIL wave operations over the
      /// host's active lanes: the console's result with console lanes; on
      /// another wave size, what the HLSL wave operation the console compiler
-@@ -2085,10 +1968,10 @@ impl<'a> Lower<'a> {
+@@ -2340,10 +2223,10 @@ impl<'a> Lower<'a> {
          let (op, src, mask, ident, prefix) = match shape {
              Shape::K(k) => return Ok(self.s.m.i32(k)),
              Shape::Value(v) => return self.i32_of(v),
@@ -5450,7 +5463,7 @@ index 5c69c179b..ea850a770 100644
              Shape::Masked(src, mask, ident) => {
                  let c = self.cur;
                  let &m = self
-@@ -2154,53 +2037,7 @@ impl<'a> Lower<'a> {
+@@ -2409,53 +2292,7 @@ impl<'a> Lower<'a> {
          let arg = if float { self.as_float(x) } else { x };
          let ty = if float { f32t } else { i32t };
          let sfx = if float { "f32" } else { "i32" };
@@ -5505,7 +5518,7 @@ index 5c69c179b..ea850a770 100644
          // two host waves of 32 hold the console's 64 lanes: their results combine
          let r = if self.local || self.exchange.as_ref().is_some_and(|e| e.1) {
              // this host wave's own result (and prefix): each wave on its own, or a group of
-@@ -2239,24 +2076,7 @@ impl<'a> Lower<'a> {
+@@ -2494,24 +2331,7 @@ impl<'a> Lower<'a> {
                      let c = self.cur;
                      let (lo, hi) = self.exchange_halves(c, rb);
                      let (lo, hi) = (back(self, lo), back(self, hi));
@@ -5531,7 +5544,7 @@ index 5c69c179b..ea850a770 100644
                  }
              }
          } else {
-@@ -2265,77 +2085,145 @@ impl<'a> Lower<'a> {
+@@ -2520,77 +2340,145 @@ impl<'a> Lower<'a> {
          Ok(if float { self.as_int(r) } else { r })
      }
  
@@ -5742,7 +5755,7 @@ index 5c69c179b..ea850a770 100644
      }
  
      /// The sum of two 16-bit floats (the low halves of `a` and `b`) as the console's
-@@ -2392,11 +2280,24 @@ impl<'a> Lower<'a> {
+@@ -2647,11 +2535,24 @@ impl<'a> Lower<'a> {
              }
              return Ok(self.half_sum_present(x));
          }
@@ -5768,7 +5781,7 @@ index 5c69c179b..ea850a770 100644
              let bit = self.s.m.i32(1 << step);
              let partner = self.s.m.bin(c, Bin::Xor, lane, bit);
              let theirs = self.read_lane(sum, partner);
-@@ -2406,16 +2307,18 @@ impl<'a> Lower<'a> {
+@@ -2661,16 +2562,18 @@ impl<'a> Lower<'a> {
          let first = self.read_lane(x, zero);
          let first = self.s.m.bin(c, Bin::And, first, high);
          let sum = self.s.m.bin(c, Bin::And, sum, low);
@@ -5793,7 +5806,7 @@ index 5c69c179b..ea850a770 100644
      }
  
      /// [`Self::half_sum`] in one host wave of 64 where some lanes have left (a thread past
-@@ -2487,7 +2390,7 @@ impl<'a> Lower<'a> {
+@@ -2742,7 +2645,7 @@ impl<'a> Lower<'a> {
                  self.s.m.new_block()
              });
          }
@@ -5802,7 +5815,7 @@ index 5c69c179b..ea850a770 100644
          for &b in &order {
              let header = p.blocks[b]
                  .preds
-@@ -2497,22 +2400,43 @@ impl<'a> Lower<'a> {
+@@ -2752,22 +2655,43 @@ impl<'a> Lower<'a> {
                  let blk = self.block[b].expect("reachable");
                  let phi = self.s.m.phi(blk, self.s.t.i32);
                  self.counters.insert(b, (phi, Vec::new()));
@@ -5857,7 +5870,7 @@ index 5c69c179b..ea850a770 100644
          }
          if let Some(mesh) = self.s.mesh {
              self.mesh_prologue(mesh).map_err(|w| unsupported(0, w))?;
-@@ -2533,32 +2457,30 @@ impl<'a> Lower<'a> {
+@@ -2788,32 +2712,30 @@ impl<'a> Lower<'a> {
                  .filter(|&q| self.block[q].is_some())
                  .collect();
              self.exported[b] = !preds.is_empty() && preds.iter().all(|&q| self.exported_out(q));
@@ -5906,7 +5919,7 @@ index 5c69c179b..ea850a770 100644
                      }
                      i = end;
                      continue;
-@@ -2573,6 +2495,35 @@ impl<'a> Lower<'a> {
+@@ -2828,6 +2750,35 @@ impl<'a> Lower<'a> {
              self.exit(b)?;
          }
          self.fill_phis()?;
@@ -5942,7 +5955,7 @@ index 5c69c179b..ea850a770 100644
          let user_data = self.user_reads.values().copied().collect();
          self.s.samplers = self.samplers.len() as u32;
          let root_cbvs = self.s.root_cbvs.iter().map(|r| r.0).collect();
-@@ -2581,8 +2532,18 @@ impl<'a> Lower<'a> {
+@@ -2836,8 +2787,18 @@ impl<'a> Lower<'a> {
          let half_views = std::mem::take(&mut self.half_views).into_iter().collect();
          let cmp_samplers = self.s.cmp_samplers;
          let wave_size = self.s.wave_size;
@@ -5961,7 +5974,7 @@ index 5c69c179b..ea850a770 100644
              cmp_samplers,
              root_cbvs,
              root_srvs,
-@@ -2598,6 +2559,29 @@ impl<'a> Lower<'a> {
+@@ -2853,6 +2814,29 @@ impl<'a> Lower<'a> {
          })
      }
  
@@ -5991,7 +6004,7 @@ index 5c69c179b..ea850a770 100644
      fn exported_out(&self, b: usize) -> bool {
          self.exported[b] || self.has_done_export(b)
      }
-@@ -2659,12 +2643,28 @@ impl<'a> Lower<'a> {
+@@ -2914,12 +2898,28 @@ impl<'a> Lower<'a> {
                  };
              }
              Input::Barycentric { kind, index } => return self.barycentric(kind, index),
@@ -6021,7 +6034,7 @@ index 5c69c179b..ea850a770 100644
              Input::GroupInfo => return Val::Missing("the thread-group info SGPR"),
              Input::MeshGroup => {
                  let Val::I32(g) = self.compute_id("groupId.i32", 94, 0) else {
-@@ -2730,50 +2730,6 @@ impl<'a> Lower<'a> {
+@@ -2985,50 +2985,6 @@ impl<'a> Lower<'a> {
      }
  
      /// A component of a compute thread or group id, read in the entry block.
@@ -6072,7 +6085,7 @@ index 5c69c179b..ea850a770 100644
      fn compute_id(&mut self, name: &str, opcode: u32, c: u8) -> Val {
          let (entry, c) = (self.s.entry, self.s.m.i32(u32::from(c)));
          Val::I32(
-@@ -2821,8 +2777,9 @@ impl<'a> Lower<'a> {
+@@ -3076,8 +3032,9 @@ impl<'a> Lower<'a> {
              ".f32"
          };
          let entry = self.s.entry;
@@ -6083,7 +6096,7 @@ index 5c69c179b..ea850a770 100644
              self.s.m.i32(0),
              self.s.m.i8(col),
              self.s.m.undef(self.s.t.i32),
-@@ -3230,7 +3187,7 @@ impl<'a> Lower<'a> {
+@@ -3485,7 +3442,7 @@ impl<'a> Lower<'a> {
          };
          let word = |l: &mut Self, k: u8| -> Result<V, Why> {
              let v = inst.read(Reg::V(areg + k)).ok_or("a global address")?;
@@ -6092,7 +6105,7 @@ index 5c69c179b..ea850a770 100644
          };
          let (lo, hi) = (word(self, 0)?, word(self, 1)?);
          let (lo, hi) = self.address_plus(lo, hi, i32::from(*offset));
-@@ -3463,9 +3420,11 @@ impl<'a> Lower<'a> {
+@@ -3718,9 +3675,11 @@ impl<'a> Lower<'a> {
          let &m = self.x.st.masks.get(&lo).ok_or(LANE_MASK)?;
          // A mask that holds lanes outside EXEC where it is written (the complement of one,
          // say) is the ballot of the lanes that are there: all of them, where two exchanging
@@ -6106,7 +6119,7 @@ index 5c69c179b..ea850a770 100644
          if !self.x.st.active.contains(&lo) && !whole {
              if self.exchange.is_some() && !self.local {
                  need(made.unwrap_or(0));
-@@ -3484,14 +3443,14 @@ impl<'a> Lower<'a> {
+@@ -3739,14 +3698,14 @@ impl<'a> Lower<'a> {
                  if !self.balloting.insert(lo) {
                      return Err("a lane mask whose lanes depend on its own value");
                  }
@@ -6128,7 +6141,7 @@ index 5c69c179b..ea850a770 100644
                  let i32t = self.s.t.i32;
                  let four = self.s.m.named_struct("dx.types.fouri32", vec![i32t; 4]);
                  let r = self
-@@ -3499,7 +3458,10 @@ impl<'a> Lower<'a> {
+@@ -3754,7 +3713,10 @@ impl<'a> Lower<'a> {
                      .op(at, "waveActiveBallot", Attr::NoUnwind, four, 116, &[bit]);
                  self.s.flags |= flags::WAVE_OPS;
                  let mut xy = (self.s.m.extract(at, r, 0), self.s.m.extract(at, r, 1));
@@ -6140,7 +6153,7 @@ index 5c69c179b..ea850a770 100644
                      // a host wave's ballot is its half's 32 bits: the halves exchange them
                      let b = self.def_block.get(&lo).copied();
                      if self.local {
-@@ -3531,7 +3493,7 @@ impl<'a> Lower<'a> {
+@@ -3786,7 +3748,7 @@ impl<'a> Lower<'a> {
              }
              Operand::Vector { reg, .. } => {
                  let v = inst.read(Reg::V(reg)).ok_or("an unread operand")?;
@@ -6149,7 +6162,7 @@ index 5c69c179b..ea850a770 100644
              }
              Operand::Const(c) => crate::resource::inline(c)
                  .map(|x| self.s.m.i32(x))
-@@ -3616,10 +3578,13 @@ impl<'a> Lower<'a> {
+@@ -3871,10 +3833,13 @@ impl<'a> Lower<'a> {
                  let val = inst.read(r).ok_or("an unread operand")?;
                  match self.floats.get(&val) {
                      Some(&f) => f,
@@ -6167,7 +6180,7 @@ index 5c69c179b..ea850a770 100644
                  }
              }
              _ => {
-@@ -4064,10 +4029,11 @@ impl<'a> Lower<'a> {
+@@ -4319,10 +4284,11 @@ impl<'a> Lower<'a> {
      }
  
      /// A console wave64 program in host waves of 32: the first console thread of this host wave
@@ -6183,7 +6196,7 @@ index 5c69c179b..ea850a770 100644
      fn wave_base(&mut self) -> Option<V> {
          let slot = self.halves?;
          if let Some(v) = self.wave_base {
-@@ -4082,21 +4048,36 @@ impl<'a> Lower<'a> {
+@@ -4337,21 +4303,36 @@ impl<'a> Lower<'a> {
          self.group_sync(e);
          let lane = self.s.op(e, "waveGetLaneIndex", Attr::ReadOnly, i32t, 111, &[]);
          let first = self.s.m.cmp(e, pred::EQ, lane, zero);
@@ -6223,7 +6236,7 @@ index 5c69c179b..ea850a770 100644
          if let Some(base) = self.wave_base() {
              return self.s.m.bin(e, Bin::Add, base, lane);
          }
-@@ -4109,9 +4090,10 @@ impl<'a> Lower<'a> {
+@@ -4364,9 +4345,10 @@ impl<'a> Lower<'a> {
      }
  
      /// This thread's console lane (0..63): its relabelled thread index (`thread_id`), whose host
@@ -6236,7 +6249,7 @@ index 5c69c179b..ea850a770 100644
              return self.lane_index();
          }
          if let Some(v) = self.clane {
-@@ -4203,23 +4185,29 @@ impl<'a> Lower<'a> {
+@@ -4458,23 +4440,29 @@ impl<'a> Lower<'a> {
      /// console wave has its bit of the result, asked where the operation stands. The lanes
      /// that are elsewhere have no bit (the result is ANDed with EXEC or is EXEC), so with
      /// the console's waves the host wave's answer is the console's; two host waves of 32
@@ -6277,7 +6290,7 @@ index 5c69c179b..ea850a770 100644
          let (i1t, i32t) = (self.s.t.i1, self.s.t.i32);
          let some = self.s.op(at, "waveAnyTrue", Attr::NoUnwind, i1t, 113, &[bit]);
          self.s.flags |= flags::WAVE_OPS;
-@@ -4240,6 +4228,18 @@ impl<'a> Lower<'a> {
+@@ -4495,6 +4483,18 @@ impl<'a> Lower<'a> {
      fn wave_wide(&mut self, b: usize, when: Bool) -> Result<V, Why> {
          const WHY: Why = "a wave-wide branch where not every lane runs";
          let any = self.x.st.wave_any.get(b).copied().flatten().ok_or("a wave-wide branch on a scalar condition")?;
@@ -6296,7 +6309,7 @@ index 5c69c179b..ea850a770 100644
          if self.exchange.is_none() && self.halves.is_none() && self.console_lanes && self.mask_data == MaskData::Console {
              // The host's waves are the console's: the wave's own answer. The lanes that are
              // elsewhere have no bit set, as on the console, so "some lane" needs no one but
-@@ -4301,7 +4301,7 @@ impl<'a> Lower<'a> {
+@@ -4556,7 +4556,7 @@ impl<'a> Lower<'a> {
      /// This lane's bit of the mask `lo`, `hi` (wave64).
      fn lane_bit(&mut self, at: usize, lo: V, hi: Option<V>) -> V {
          self.s.flags |= flags::WAVE_OPS;
@@ -6305,7 +6318,7 @@ index 5c69c179b..ea850a770 100644
              self.console_lane()
          } else {
              self.s.op(at, "waveGetLaneIndex", Attr::ReadOnly, self.s.t.i32, 111, &[])
-@@ -4393,6 +4393,7 @@ impl<'a> Lower<'a> {
+@@ -4648,6 +4648,7 @@ impl<'a> Lower<'a> {
                  };
                  let v = self.s.m.select(self.cur, g, x, old);
                  self.s.m.tag(v, Tag::Guard);
@@ -6313,7 +6326,7 @@ index 5c69c179b..ea850a770 100644
                  v
              }
              _ => x,
-@@ -4459,11 +4460,14 @@ impl<'a> Lower<'a> {
+@@ -4714,11 +4715,14 @@ impl<'a> Lower<'a> {
          };
          let x = self.as_int(f);
          self.write(inst, Reg::V(reg), x, guard);
@@ -6331,7 +6344,7 @@ index 5c69c179b..ea850a770 100644
          }
          Ok(())
      }
-@@ -4535,15 +4539,20 @@ impl<'a> Lower<'a> {
+@@ -4790,15 +4794,20 @@ impl<'a> Lower<'a> {
      /// thread is relabelled so that its host lane is its console lane: the
      /// flat id is the wave's first lane's, rounded down to the wave size,
      /// plus the lane index. (A bijection while each host wave holds a
@@ -6355,7 +6368,7 @@ index 5c69c179b..ea850a770 100644
              let f = self.console_thread();
              self.s.flags |= flags::WAVE_OPS;
              let (xk, yk, xy) = (self.s.m.i32(x), self.s.m.i32(y), self.s.m.i32(x * y));
-@@ -4610,7 +4619,15 @@ impl<'a> Lower<'a> {
+@@ -4865,7 +4874,15 @@ impl<'a> Lower<'a> {
          // never reached: they come down to the lane count when the outputs
          // do not fit.
          use super::container::{MESH_OUTPUT_LIMIT, mesh_output_bytes};
@@ -6372,7 +6385,7 @@ index 5c69c179b..ea850a770 100644
          let fits = |m: super::shader::Mesh| {
              mesh_output_bytes(outputs, prims, m.max_vertices, m.max_primitives) <= MESH_OUTPUT_LIMIT
          };
-@@ -4734,7 +4751,33 @@ impl<'a> Lower<'a> {
+@@ -4989,7 +5006,33 @@ impl<'a> Lower<'a> {
      /// `x` in the first lane of this host wave where `guard` holds, and whether it has such a
      /// lane: the console reads the first lane of EXEC, and a lane that got here with EXEC clear
      /// (a guard, not a branch) is not one. With none, `x` of the wave's first lane here.
@@ -6406,7 +6419,7 @@ index 5c69c179b..ea850a770 100644
          let c = self.cur;
          let i32t = self.s.t.i32;
          self.s.flags |= flags::WAVE_OPS;
-@@ -4789,7 +4832,7 @@ impl<'a> Lower<'a> {
+@@ -5044,7 +5087,7 @@ impl<'a> Lower<'a> {
          (0..n)
              .map(|k| {
                  let v = inst.read(Reg::V(reg + k)).ok_or("an unread operand")?;
@@ -6415,7 +6428,7 @@ index 5c69c179b..ea850a770 100644
              })
              .collect()
      }
-@@ -4810,6 +4853,9 @@ impl<'a> Lower<'a> {
+@@ -5065,6 +5108,9 @@ impl<'a> Lower<'a> {
          if *gds {
              return Err("GDS");
          }
@@ -6425,7 +6438,7 @@ index 5c69c179b..ea850a770 100644
          let name = inst.name();
          // Lanes past a DispatchX count neither read nor write LDS; a
          // swizzle or permute moves registers only, under its own guard.
-@@ -5096,7 +5142,21 @@ impl<'a> Lower<'a> {
+@@ -5351,7 +5397,21 @@ impl<'a> Lower<'a> {
              return Ok(());
          }
          let at = self.begin_guarded(guard);
@@ -6447,7 +6460,7 @@ index 5c69c179b..ea850a770 100644
              Some(op) => self.s.m.atomic(self.cur, op, p, v0),
              // Compare with data0, store data1.
              None => self
-@@ -5123,6 +5183,12 @@ impl<'a> Lower<'a> {
+@@ -5378,6 +5438,12 @@ impl<'a> Lower<'a> {
      // shortcut: f32 denormals compare as kept; with the console's MODE
      // flushing them they would order as ±0 first (MODE is not modelled).
      fn lds_float_min_max(&mut self, p: V, data: V, max: bool) -> V {
@@ -6460,7 +6473,7 @@ index 5c69c179b..ea850a770 100644
          let pre = self.cur;
          let init = self.s.m.load(pre, p);
          let (lp, exit) = (self.s.m.new_block(), self.s.m.new_block());
-@@ -5130,7 +5196,7 @@ impl<'a> Lower<'a> {
+@@ -5385,7 +5451,7 @@ impl<'a> Lower<'a> {
          let i32t = self.s.t.i32;
          let old = self.s.m.phi(lp, i32t);
          self.cur = lp;
@@ -6469,7 +6482,7 @@ index 5c69c179b..ea850a770 100644
          let prev = self.s.m.cmpxchg(lp, p, old, new);
          let done = self.s.m.cmp(lp, pred::EQ, prev, old);
          self.s.m.set_phi(old, vec![(init, pre), (prev, lp)]);
-@@ -5238,6 +5304,8 @@ impl<'a> Lower<'a> {
+@@ -5493,6 +5559,8 @@ impl<'a> Lower<'a> {
              let void = self.s.t.void;
              self.s.op(self.cur, "barrier", Attr::NoDuplicate, void, 80, &[mode]);
          }
@@ -6478,7 +6491,7 @@ index 5c69c179b..ea850a770 100644
          let r = match &inst.fields {
              Fields::Sop { .. } => self.sop(inst),
              Fields::Sopp { .. } if name == "s_barrier" && self.no_barrier.contains(&b) => Ok(()),
-@@ -5262,6 +5330,10 @@ impl<'a> Lower<'a> {
+@@ -5517,6 +5585,10 @@ impl<'a> Lower<'a> {
                      .op(self.cur, "barrier", Attr::NoDuplicate, void, 80, &[mode]);
                  Ok(())
              }
@@ -6489,7 +6502,7 @@ index 5c69c179b..ea850a770 100644
              Fields::Sopp { .. } => Ok(()),
              Fields::Smem { .. } => self.smem(inst, (b, i)),
              Fields::Valu(_) if name.starts_with("v_interp_") => self.interp(inst, (b, i)),
-@@ -5283,18 +5355,164 @@ impl<'a> Lower<'a> {
+@@ -5538,18 +5610,164 @@ impl<'a> Lower<'a> {
              Fields::Flat { .. } if name.starts_with("global_") => self.flat(inst, b, i),
              Fields::Flat { .. } => Err("flat memory"),
          };
@@ -6654,7 +6667,7 @@ index 5c69c179b..ea850a770 100644
      /// The two host waves of a console wave meet (a group barrier with a shared-memory
      /// fence): LDS writes before are seen by reads after.
      fn lds_meeting(&mut self) {
-@@ -5950,6 +6168,10 @@ impl<'a> Lower<'a> {
+@@ -6205,6 +6423,10 @@ impl<'a> Lower<'a> {
          if self.scalar.get(&site).is_some_and(|a| a.param == MEMORY) {
              return self.memory_smem(inst);
          }
@@ -6665,7 +6678,7 @@ index 5c69c179b..ea850a770 100644
          let Some(rest) = name.strip_prefix("s_buffer_load_dword") else {
              return self.descriptor_data(inst, site);
          };
-@@ -6125,358 +6347,6 @@ impl<'a> Lower<'a> {
+@@ -6380,358 +6602,6 @@ impl<'a> Lower<'a> {
          Ok(())
      }
  
@@ -7024,7 +7037,7 @@ index 5c69c179b..ea850a770 100644
      /// `s_load_dword*` from the program's constant table.
      fn code_smem(&mut self, inst: &Inst, a: Address) -> Result<(), Why> {
          let Fields::Smem {
-@@ -6507,7 +6377,8 @@ impl<'a> Lower<'a> {
+@@ -6762,7 +6632,8 @@ impl<'a> Lower<'a> {
              if per_lane {
                  self.s.flags |= flags::WAVE_OPS;
                  let i32t = self.s.t.i32;
@@ -7034,7 +7047,7 @@ index 5c69c179b..ea850a770 100644
              }
              addr = self.s.m.bin(c, Bin::Add, addr, d);
          }
-@@ -6787,8 +6658,9 @@ impl<'a> Lower<'a> {
+@@ -7042,8 +6913,9 @@ impl<'a> Lower<'a> {
                  }
                  let index = self.heap_index(*load, *first, sampler)?;
                  // A waterfall loop's load at the first lane's offset reads
@@ -7046,7 +7059,7 @@ index 5c69c179b..ea850a770 100644
                  let h = self
                      .s
                      .heap_handle(self.cur, index, sampler, per_lane, props);
-@@ -6840,6 +6712,10 @@ impl<'a> Lower<'a> {
+@@ -7095,6 +6967,10 @@ impl<'a> Lower<'a> {
                      // (11) or writes (11 with the UAV bit). Indexed
                      // accesses reach here as raw ones at index times the
                      // entry's stride (`buffer`).
@@ -7057,7 +7070,7 @@ index 5c69c179b..ea850a770 100644
                      (RootType::Descriptor, Some(ResourceType::Uav), 11 | 0x100b) => {
                          Ok(self.s.root_uav_handle(rp.slot))
                      }
-@@ -6852,7 +6728,7 @@ impl<'a> Lower<'a> {
+@@ -7107,7 +6983,7 @@ impl<'a> Lower<'a> {
              Source::Phi { block, args } => {
                  let _ = site;
                  let phi = self.descriptor_phi(*block, args, sampler, 8)?;
@@ -7066,7 +7079,7 @@ index 5c69c179b..ea850a770 100644
              }
              Source::Select { scc, args } => {
                  // The heap index of each choice, picked by SCC (uniform).
-@@ -6870,7 +6746,7 @@ impl<'a> Lower<'a> {
+@@ -7125,7 +7001,7 @@ impl<'a> Lower<'a> {
                  let set = self.heap_index(a, fa, sampler)?;
                  let clear = self.heap_index(b, fb, sampler)?;
                  let index = self.s.m.select(self.cur, cond, set, clear);
@@ -7075,7 +7088,7 @@ index 5c69c179b..ea850a770 100644
              }
              Source::Fetched { .. } | Source::Lanes { .. } | Source::LanePhi { .. } => {
                  // A descriptor each lane has its own of (a waterfall loop
-@@ -6894,7 +6770,7 @@ impl<'a> Lower<'a> {
+@@ -7149,7 +7025,7 @@ impl<'a> Lower<'a> {
          sampler: bool,
          depth: u32,
      ) -> Result<V, Why> {
@@ -7084,7 +7097,7 @@ index 5c69c179b..ea850a770 100644
          let p = self.x.p;
          let mut incoming = Vec::new();
          for (&q, arg) in p.blocks[block].preds.iter().zip(args) {
-@@ -7000,6 +6876,10 @@ impl<'a> Lower<'a> {
+@@ -7255,6 +7131,10 @@ impl<'a> Lower<'a> {
                  let clear = self.lane_heap_index(b, sampler)?;
                  Ok(self.s.m.select(self.cur, cond, set, clear))
              }
@@ -7095,7 +7108,7 @@ index 5c69c179b..ea850a770 100644
              Source::LanePhi { block, args } => {
                  // Each predecessor computes its heap index at its end (what
                  // it reads is there: the dwords are, on that edge); the join
-@@ -7271,7 +7151,9 @@ impl<'a> Lower<'a> {
+@@ -7526,7 +7406,9 @@ impl<'a> Lower<'a> {
          if let Some((rows, banks)) = masks {
              // Row (16 lanes) and bank (4 lanes of a row) write masks.
              let (four, two, three) = (k(self, 4), k(self, 2), k(self, 3));
@@ -7106,7 +7119,7 @@ index 5c69c179b..ea850a770 100644
              let ri = self.s.m.bin(c, Bin::And, ri, three);
              let bi = self.s.m.bin(c, Bin::LShr, lane, two);
              let bi = self.s.m.bin(c, Bin::And, bi, three);
-@@ -7306,6 +7188,9 @@ impl<'a> Lower<'a> {
+@@ -7561,6 +7443,9 @@ impl<'a> Lower<'a> {
          if let Some(op) = name.strip_prefix("v_pk_") {
              return self.packed16(inst, op, guard);
          }
@@ -7116,7 +7129,7 @@ index 5c69c179b..ea850a770 100644
          match name {
              "v_mad_u64_u32" => {
                  // a * b + c, c and the result 64 bits wide; the carry out
-@@ -7700,12 +7585,15 @@ impl<'a> Lower<'a> {
+@@ -7955,12 +7840,15 @@ impl<'a> Lower<'a> {
                      return Err("an accumulator");
                  };
                  let acc = inst.read(Reg::V(reg)).ok_or("an accumulator")?;
@@ -7138,7 +7151,7 @@ index 5c69c179b..ea850a770 100644
                  };
                  let r = match name {
                      "v_fmac_f32" => self.fmad(a, bb, acc),
-@@ -7855,12 +7743,6 @@ impl<'a> Lower<'a> {
+@@ -8110,12 +7998,6 @@ impl<'a> Lower<'a> {
                  let r = self.s.m.cast(c, op, a, self.s.t.f32);
                  float(self, r)
              }
@@ -7151,7 +7164,7 @@ index 5c69c179b..ea850a770 100644
              "v_fma_mix_f32" | "v_fma_mixlo_f16" | "v_fma_mixhi_f16" => {
                  // Each source is f32, or with op_sel_hi the low (op_sel: high)
                  // f16 half; neg_hi is the absolute value here.
-@@ -7901,9 +7783,13 @@ impl<'a> Lower<'a> {
+@@ -8156,9 +8038,13 @@ impl<'a> Lower<'a> {
                  let Some(Operand::Vector { reg, .. }) = v.dst else {
                      return Err("a mixed-precision result");
                  };
@@ -7165,7 +7178,7 @@ index 5c69c179b..ea850a770 100644
                          // An old value without a host form (the first half of an
                          // interpolation the register held) whose kept half no one reads.
                          Err(_)
-@@ -8126,6 +8012,14 @@ impl<'a> Lower<'a> {
+@@ -8381,6 +8267,14 @@ impl<'a> Lower<'a> {
                      return Err("a lane write in a half-wave");
                  }
                  let me = self.console_lane();
@@ -7180,7 +7193,7 @@ index 5c69c179b..ea850a770 100644
                  let is = self.s.m.cmp(c, pred::EQ, me, lane);
                  let r = self.s.m.select(c, is, a, old);
                  int(self, r)
-@@ -8241,159 +8135,6 @@ impl<'a> Lower<'a> {
+@@ -8496,159 +8390,6 @@ impl<'a> Lower<'a> {
          }
      }
  
@@ -7340,7 +7353,7 @@ index 5c69c179b..ea850a770 100644
      fn join64(&mut self, lo: V, hi: V) -> V {
          let c = self.cur;
          let ty = self.s.m.int(64);
-@@ -8404,69 +8145,6 @@ impl<'a> Lower<'a> {
+@@ -8659,69 +8400,6 @@ impl<'a> Lower<'a> {
          self.s.m.bin(c, Bin::Or, lo, hi)
      }
  
@@ -7410,7 +7423,7 @@ index 5c69c179b..ea850a770 100644
      /// The low and high dwords of an i64.
      fn split64(&mut self, x: V) -> (V, V) {
          let c = self.cur;
-@@ -9653,25 +9331,12 @@ impl<'a> Lower<'a> {
+@@ -9908,25 +9586,12 @@ impl<'a> Lower<'a> {
  
      fn interp(&mut self, inst: &Inst, site: Site) -> Result<(), Why> {
          let Some(&interp) = self.interps.get(&site) else {
@@ -7442,7 +7455,7 @@ index 5c69c179b..ea850a770 100644
              return Err(FIRST_HALF);
          };
          let name = inst.name();
-@@ -9929,8 +9594,9 @@ impl<'a> Lower<'a> {
+@@ -10184,8 +9849,9 @@ impl<'a> Lower<'a> {
          };
          self.s.flags |= flags::BARYCENTRICS;
          let entry = self.s.entry;
@@ -7453,7 +7466,7 @@ index 5c69c179b..ea850a770 100644
              self.s.m.i32(0),
              self.s.m.i8(col),
              self.s.m.i8(k),
-@@ -10122,7 +9788,7 @@ impl<'a> Lower<'a> {
+@@ -10377,7 +10043,7 @@ impl<'a> Lower<'a> {
          let addr_u32 = |l: &mut Self, reg_idx: usize| -> Result<V, Why> {
              let r = *regs.get(reg_idx).ok_or("an image address")?;
              let v = inst.read(Reg::V(r)).ok_or("an image address")?;
@@ -7462,7 +7475,7 @@ index 5c69c179b..ea850a770 100644
          };
          // With a16, two 16-bit components per VGPR starting at `base_reg`, low half first.
          let addr_packed = |l: &mut Self, base_reg: usize, k: usize| -> Result<V, Why> {
-@@ -10432,6 +10098,10 @@ impl<'a> Lower<'a> {
+@@ -10687,6 +10353,10 @@ impl<'a> Lower<'a> {
                      return Err("an image result");
                  };
                  let f32t = self.s.t.f32;
@@ -7473,7 +7486,7 @@ index 5c69c179b..ea850a770 100644
                  for (k, ch) in (0..2u32).filter(|ch| dmask >> ch & 1 != 0).enumerate() {
                      let clamped = self.s.m.bool(ch == 0);
                      let lod = self.s.op(
-@@ -10440,7 +10110,7 @@ impl<'a> Lower<'a> {
+@@ -10695,7 +10365,7 @@ impl<'a> Lower<'a> {
                          Attr::ReadOnly,
                          f32t,
                          81,
@@ -7482,7 +7495,7 @@ index 5c69c179b..ea850a770 100644
                      );
                      let x = self.as_int(lod);
                      self.write(inst, Reg::V(reg + k as u8), x, guard);
-@@ -10936,7 +10606,7 @@ impl<'a> Lower<'a> {
+@@ -11191,7 +10861,7 @@ impl<'a> Lower<'a> {
          };
          let vaddr = |l: &mut Self, k: u8| -> Result<V, Why> {
              let v = inst.read(Reg::V(areg + k)).ok_or("a buffer address")?;
@@ -7491,7 +7504,7 @@ index 5c69c179b..ea850a770 100644
          };
          let index = if *idxen { Some(vaddr(self, 0)?) } else { None };
          let mut off = self.s.m.i32(u32::from(*offset));
-@@ -11584,6 +11254,10 @@ impl<'a> Lower<'a> {
+@@ -11839,6 +11509,10 @@ impl<'a> Lower<'a> {
              (true, true) => ("storePrimitiveOutput", 172),
          };
          for (id, col, value, half) in stores {
@@ -7502,7 +7515,7 @@ index 5c69c179b..ea850a770 100644
              let mut x = self.i32_of(value)?;
              if let Some(high) = half {
                  // An f16 half, declared a 32-bit float on the host.
-@@ -11611,8 +11285,9 @@ impl<'a> Lower<'a> {
+@@ -11866,8 +11540,9 @@ impl<'a> Lower<'a> {
                  }
                  _ => (".i32", x),
              };
@@ -7513,7 +7526,7 @@ index 5c69c179b..ea850a770 100644
                  self.s.m.i32(0),
                  self.s.m.i8(col),
                  x,
-@@ -11726,7 +11401,10 @@ impl<'a> Lower<'a> {
+@@ -11981,7 +11656,10 @@ impl<'a> Lower<'a> {
          let term = match self.x.st.exits[b] {
              LaneExit::Jump(t) if self.counters.contains_key(&t) && self.rpo[t] <= self.rpo[b] => {
                  let ok = self.count_iteration(t, pred::IULT);
@@ -7525,7 +7538,7 @@ index 5c69c179b..ea850a770 100644
                  Term::CondBr(ok, self.block[t].expect("reachable"), abort)
              }
              LaneExit::Jump(t) => {
-@@ -11744,6 +11422,16 @@ impl<'a> Lower<'a> {
+@@ -11999,6 +11677,16 @@ impl<'a> Lower<'a> {
                          let c = self.wave_wide(b, when).map_err(|w| unsupported(offset, w))?;
                          (c, taken, not_taken)
                      }
@@ -7542,7 +7555,7 @@ index 5c69c179b..ea850a770 100644
                      Some((atom, Bool::TRUE, Bool::FALSE)) => {
                          let a = self
                              .atom(atom, self.cur)
-@@ -11762,25 +11450,66 @@ impl<'a> Lower<'a> {
+@@ -12017,25 +11705,66 @@ impl<'a> Lower<'a> {
                      |l: &Self, to: usize| l.counters.contains_key(&to) && l.rpo[to] <= l.rpo[b];
                  // (No `xor` of a compare: a loop exit testing one hung the
                  // AMD driver.)
@@ -7615,7 +7628,7 @@ index 5c69c179b..ea850a770 100644
                          };
                          self.enter_loop(b, to, from);
                      }
-@@ -11803,72 +11532,6 @@ impl<'a> Lower<'a> {
+@@ -12058,72 +11787,6 @@ impl<'a> Lower<'a> {
          Ok(())
      }
  
@@ -7688,7 +7701,7 @@ index 5c69c179b..ea850a770 100644
      /// The DXIL block a branch from IR block `from` to `to` goes to.
      fn edge(&mut self, from: usize, to: usize) -> usize {
          let target = self.block[to].expect("reachable");
-@@ -12207,6 +11870,11 @@ mod tests {
+@@ -12462,6 +12125,11 @@ mod tests {
  
      /// Whether a synthetic compute program translates with these input registers.
      fn lowers(words: &[u32], rsrc2: u32) -> Result<(), crate::ShaderError> {
@@ -7700,7 +7713,7 @@ index 5c69c179b..ea850a770 100644
          let code: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
          let native = NativeProgram {
              stage: HwStage::Cs,
-@@ -12235,7 +11903,23 @@ mod tests {
+@@ -12490,7 +12158,23 @@ mod tests {
              prims: vec![],
              mesh_stride: 0,
          })
@@ -7725,7 +7738,7 @@ index 5c69c179b..ea850a770 100644
      }
  
      /// Lowers a compute program with the root parameters `layout` (in user
-@@ -12550,6 +12234,51 @@ mod tests {
+@@ -12805,6 +12489,51 @@ mod tests {
          }
      }
  
@@ -7778,7 +7791,7 @@ index 5c69c179b..ea850a770 100644
      fn scalar_bit_tests_lower() {
          // Each tests one bit of a constant into SCC and branches on it (only
 diff --git a/crates/victory-shader/src/emit/mod.rs b/crates/victory-shader/src/emit/mod.rs
-index 295760d64..bbda88d88 100644
+index 7a7154ca5..d4a57f2d7 100644
 --- a/crates/victory-shader/src/emit/mod.rs
 +++ b/crates/victory-shader/src/emit/mod.rs
 @@ -2,7 +2,10 @@
@@ -8022,7 +8035,7 @@ index 295760d64..bbda88d88 100644
      out.extend_from_slice(&shader_opt().to_le_bytes());
      out
 @@ -355,10 +417,45 @@ fn parse_shader_opt(value: Option<&str>) -> u32 {
-     parsed.map_or(bitcode::opt::DEFAULT, |n| n & bitcode::opt::ALL)
+     parsed.map_or(bitcode::opt::DEFAULT, |n| n & (bitcode::opt::ALL | bitcode::opt::FAST))
  }
  
 -/// `VICTORY_SHADER_LOOP_LIMIT`'s value; the default when it is unset,
@@ -8562,7 +8575,7 @@ index 295760d64..bbda88d88 100644
  
      #[test]
      fn the_clean_up_switch_parses_or_runs_every_pass() {
-@@ -1091,26 +1454,30 @@ mod tests {
+@@ -1094,26 +1457,30 @@ mod tests {
  
      #[test]
      fn the_loop_limit_switch_parses_or_falls_back() {
@@ -8610,7 +8623,7 @@ index 295760d64..bbda88d88 100644
      use super::container::SigElement;
      use super::shader::Shader;
      use super::*;
-@@ -1958,7 +2325,7 @@ mod atomic_tests {
+@@ -1961,7 +2328,7 @@ mod atomic_tests {
  mod barycentric_tests {
      use super::container::SigElement;
      use super::*;
@@ -8619,7 +8632,7 @@ index 295760d64..bbda88d88 100644
  
      /// `SPI_PS_INPUT_ADDR` bits: PERSP_CENTER, LINEAR_CENTER.
      const PERSP_CENTER: u32 = 1 << 1;
-@@ -1992,12 +2359,24 @@ mod barycentric_tests {
+@@ -1995,12 +2362,24 @@ mod barycentric_tests {
      /// Translates a pixel program with the input VGPRs `input_addr`
      /// enables and one float4 TEXCOORD0 attribute (attr 0, row 0).
      fn pixel(words: &[u32], input_addr: u32) -> Result<HostShader, ShaderError> {
@@ -8646,7 +8659,7 @@ index 295760d64..bbda88d88 100644
              io: StageIo::Ps {
                  inputs: vec![PsInput {
                      usage: Usage::Generic,
-@@ -2005,7 +2384,7 @@ mod barycentric_tests {
+@@ -2008,7 +2387,7 @@ mod barycentric_tests {
                      mask: 0b1111,
                      attr: 0,
                      flat: false,
@@ -8655,7 +8668,7 @@ index 295760d64..bbda88d88 100644
                      pack2: false,
                      row2: 0,
                  }],
-@@ -2071,6 +2450,131 @@ mod barycentric_tests {
+@@ -2074,6 +2453,131 @@ mod barycentric_tests {
          validate(&shader);
      }
  
@@ -8787,7 +8800,7 @@ index 295760d64..bbda88d88 100644
      /// Two kinds of barycentrics read directly: one element per mode.
      #[test]
      fn two_barycentric_modes_get_two_elements() {
-@@ -2203,6 +2707,160 @@ mod barycentric_tests {
+@@ -2206,6 +2710,160 @@ mod barycentric_tests {
          validate(&shader);
      }
  
@@ -8948,7 +8961,7 @@ index 295760d64..bbda88d88 100644
      /// P10 of an attribute the program interpolates is P1 - P0.
      #[test]
      fn p10_of_an_interpolated_attribute() {
-@@ -2224,4 +2882,132 @@ mod barycentric_tests {
+@@ -2227,4 +2885,132 @@ mod barycentric_tests {
          let words = [0xC812_0000, e0, e1, S_ENDPGM];
          assert!(pixel(&words, PERSP_CENTER).is_err());
      }

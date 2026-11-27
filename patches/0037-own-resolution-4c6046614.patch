@@ -1,52 +1,53 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Octo <180629317+OctoAlgo@users.noreply.github.com>
-Date: Thu, 26 Nov 2026 18:17:16 +0100
-Subject: [PATCH 37/37] Resolution: the fork-main conflicts of this series on
- e4245f3c1
+Date: Fri, 27 Nov 2026 01:16:53 +0100
+Subject: [PATCH 37/38] Resolution: the fork-main conflicts of this series on
+ 4c6046614
 
-The series was resolved once as a merge of fork main e4245f3c1 into the v0.1 stack
-(ceb9e1f7a + 39 patches). Linearised onto e4245f3c1 without 0012 (#927) and 0013
-(#1002), both now in fork main, the conflicting hunks of the other patches were
-taken from the picked side; this patch brings in the merge-time resolutions (it
-replaces v0.1's resolution on ceb9e1f7a), so the full series gives the merged tree.
+The series was resolved once as a merge of fork main 4c6046614 into the v0.2 stack
+(e4245f3c1 + 37 patches). Linearised onto 4c6046614, the conflicting hunks of the
+other patches were taken from the picked side; this patch brings in the merge-time
+resolutions of both rounds (it replaces v0.2's resolution on e4245f3c1, whose
+decisions all stand), so the full series gives the merged tree.
 
-Decisions (docs/rebase.md has the list):
-- #927: fork main's newer revision kept everywhere (d16 accesses name a place only
-  where every access does; a run-time pick names none); our older copies of its
-  tests and of its descriptor-data condition (now in descriptor_data.rs) dropped.
-- Split dispatches (#993, USER_GROUP_BASE) kept over upstream's spread across z
-  (USER_DISPATCH_SPREAD, VIctory #2312); #646's USER_DISPATCH_THREADS (0x106) and
-  DispatchX thread counts wired onto the split path; `is_spread` is a split dispatch.
-- #995's indirect clamp kept (record_clamp_as, rec_* constants); fork main's clamp
-  window and gather segments run on it (same six constants, bit 16 read as
-  rec_has_count), VICTORY_CLAMP_LEAN through record_clamp_with(.., lean).
-- VICTORY_DIRTY_4K not taken: #995's fine pages (VICTORY_FINE_PAGES, `Written`)
-  copy only the written 4 KiB pages already; its journal and hook left out.
-- VICTORY_PAGE_WRITES: fork main's default 1|2|8 and bit 8 (the black-face fix);
-  "1" stays guards + slots.
-- Upstream #3198 (host textures retried when the card had no room): Result<_,
-  NoTexture> on our host_desc / small-texture split.
-- VICTORY_WAVE_WIDE_ONLY (WAVE_WIDE_HERE) selects Wide::Any in our wave-wide modes.
-- #1112 / #646 partial-thread masks added to the paired form's ballots and the
-  double sums (float64.rs).
-- Tests: HostShader initialisers of the #854/#993 and #1489 tests given half_views
-  (and root views), test-only Flight / Card fields, compile() calls take &str.
+Decisions of v0.2 (docs/rebase.md has the list): #927 fork main's revision; #993's
+split dispatches kept over upstream's spread across z (#646's thread counts wired
+onto the split path); #995's indirect clamp kept, fork main's clamp window, lean
+clamps and gather segments run on it; VICTORY_DIRTY_4K not taken (#995's fine
+pages); VICTORY_PAGE_WRITES default 1|2|8; upstream #3198 on our host_desc split;
+VICTORY_WAVE_WIDE_ONLY in our wave-wide modes; #1112/#646 partial-thread masks in
+the paired form; test initialisers fixed.
 
-Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
-Claude-Session: https://claude.ai/code/session_011dFkrUVYjMaeV1b3VJ4JEb
+New on 4c6046614:
+- #1352 VICTORY_SPREAD_LEAN not taken: it is a lean form of upstream's spread
+  across z, which the kit does not have (split dispatches instead). Its clamp
+  layout (bits 3/5, predicate word), the spread record counters (budget words
+  3-5) and its tests are left out; the switch does nothing in the kit.
+- #1312 (a dispatch waits for its compute pipeline, VICTORY_PIPELINE_COMPUTE_WAIT,
+  on) beside our first-draw wait (VICTORY_PIPELINE_WAIT_FIRST_MS): a compute
+  pipeline not made yet is made at once; a draw's first use still waits up to
+  WAIT_FIRST_MS; otherwise the frame's budget as before.
+- #1353 (a panicking pipeline build finishes its queue entry) wraps our
+  diagnostics' slow-pipeline note (0015): begin, make_with, end.
+- #1367 (a small first scratch chunk may take a kept 4 MiB one) on our scratch
+  chunks with their card-memory field (#995's sends in card memory); our
+  VICTORY_SCRATCH_SPARE_MB reader kept (same name and meaning as fork main's).
+- #1336: our alias read of a placed view takes the pinned source (`Held::get`).
 
 Kit-Source: own (merge-time conflict resolutions, linearised)
 Kit-Licence: GPL-3.0
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
  crates/victory-gpu/src/descriptor.rs          |   79 +-
  crates/victory-gpu/src/descriptor/host.rs     |   67 +-
- crates/victory-gpu/src/draw.rs                |  597 +++++----
+ crates/victory-gpu/src/draw.rs                |  643 +++++----
  crates/victory-gpu/src/heap_worker.rs         |    6 +
- crates/victory-gpu/src/host.rs                |  372 +++--
- crates/victory-gpu/src/indirect.rs            |  137 +-
+ crates/victory-gpu/src/host.rs                |  408 ++++--
+ crates/victory-gpu/src/indirect.rs            |  514 +------
  crates/victory-gpu/src/lib.rs                 |    5 +
  crates/victory-gpu/src/list.rs                |    4 +-
  crates/victory-gpu/src/pipeline.rs            |   26 +-
+ crates/victory-gpu/src/pipeline/make.rs       |   40 +-
  crates/victory-gpu/src/resource.rs            |   46 +-
  crates/victory-gpu/src/shadow.rs              |    7 +-
  crates/victory-gpu/src/watch.rs               |  166 +--
@@ -61,7 +62,7 @@ Kit-Licence: GPL-3.0
  crates/victory-shader/src/emit/shader.rs      |   10 +
  crates/victory-shader/src/emit/valu_tests.rs  | 1192 ++++++++---------
  .../victory-shader/src/emit/wave64_tests.rs   |  379 +++++-
- 23 files changed, 1975 insertions(+), 1265 deletions(-)
+ 24 files changed, 2032 insertions(+), 1707 deletions(-)
 
 diff --git a/crates/victory-gpu/src/descriptor.rs b/crates/victory-gpu/src/descriptor.rs
 index 4f6aba773..15a61b63f 100644
@@ -281,7 +282,7 @@ index bff32deae..5e870cc1c 100644
              let (from, filled) = host.shared_buffer(BYTES).expect("a buffer");
              let (to, result) = host.shared_buffer(BYTES).expect("a buffer");
 diff --git a/crates/victory-gpu/src/draw.rs b/crates/victory-gpu/src/draw.rs
-index ff363e233..00dd59dc7 100644
+index afb6241f4..d0c0c5d72 100644
 --- a/crates/victory-gpu/src/draw.rs
 +++ b/crates/victory-gpu/src/draw.rs
 @@ -716,10 +716,6 @@ pub(crate) struct State {
@@ -925,17 +926,33 @@ index ff363e233..00dd59dc7 100644
                  let bounded = if windowed && records > 1 {
                      crate::indirect::bound_ahead(list, (&args.buffer, offset), (kind, step, records))
                  } else if let Some((dst, at, opened)) = (crate::indirect::clamp_window()
-@@ -5949,9 +6200,6 @@ impl State {
+@@ -5819,12 +6070,6 @@ impl State {
+                 {
+                     window_at = Some((at, opened));
+                     Some(dst)
+-                } else if let Some((dst, pred, spread_at)) = plain
+-                    .as_ref()
+-                    .and_then(|_| crate::indirect::bound_lean(list, (&args.buffer, offset), count_arg, (kind, step, records)))
+-                {
+-                    lean = Some((pred, spread_at));
+-                    Some(dst)
+                 } else {
+                     crate::indirect::bound(list, (&args.buffer, offset), count_arg, (clamped, step, records))
+                 };
+@@ -5955,12 +6200,6 @@ impl State {
          }
          if kind == DISPATCH {
              DISPATCHED.fetch_add(1, Ordering::Relaxed);
 -            if is_spread {
 -                SPREAD[1].fetch_add(1, Ordering::Relaxed);
+-                if lean.is_some() {
+-                    SPREAD[2].fetch_add(1, Ordering::Relaxed);
+-                }
 -            }
          } else {
              DRAWN.fetch_add(1, Ordering::Relaxed);
          }
-@@ -6083,6 +6331,32 @@ pub(crate) static AMPLIFIED: AtomicU64 = AtomicU64::new(0);
+@@ -6092,6 +6331,32 @@ pub(crate) static AMPLIFIED: AtomicU64 = AtomicU64::new(0);
  /// Waits recorded where a run of them ends ([`State::amplified_reads_done`]).
  pub(crate) static AMPLIFIED_WAITS: AtomicU64 = AtomicU64::new(0);
  
@@ -968,13 +985,14 @@ index ff363e233..00dd59dc7 100644
  /// The most groups one host dispatch runs in a dimension.
  const MOST_GROUPS: u32 = 65535;
  
-@@ -6210,133 +6484,6 @@ fn wide_dispatch(p: &HostPipeline, arguments: u64, stride: u32, max: u32) {
+@@ -6219,170 +6484,6 @@ fn wide_dispatch(p: &HostPipeline, arguments: u64, stride: u32, max: u32) {
  /// The host command signature for one argument of `kind` with records
  /// `stride` bytes apart (no root arguments, so no root signature), made
  /// once.
 -/// Dispatches spread across z since the frame line last took them: direct,
--/// indirect ([`victory_shader::emit::USER_DISPATCH_SPREAD`]).
--pub(crate) static SPREAD: [AtomicU64; 2] = [const { AtomicU64::new(0) }; 2];
+-/// indirect ([`victory_shader::emit::USER_DISPATCH_SPREAD`]), and of the
+-/// indirect ones those run lean ([`spread_lean_on`]).
+-pub(crate) static SPREAD: [AtomicU64; 3] = [const { AtomicU64::new(0) }; 3];
 -
 -/// `COMPUTE_DISPATCH_INITIATOR` bit 5, `USE_THREAD_DIMENSIONS`: a
 -/// `DispatchX` whose `x`, `y`, `z` count threads, not groups; in the last
@@ -1052,6 +1070,42 @@ index ff363e233..00dd59dc7 100644
 -    }
 -}
 -
+-/// Whether a spread indirect dispatch of at most
+-/// [`crate::indirect::LEAN_RECORDS`] records runs lean
+-/// (`VICTORY_SPREAD_LEAN`: off by default; `1` on; `alt` twenty seconds
+-/// with, twenty without, in turn, each change said in the log): the clamp
+-/// writes its records within 65,535 groups in x for the plain dispatch
+-/// signature and the others for the spread signature, which runs under a
+-/// predicate the clamp sets only when a record passes 65,535. An
+-/// `ExecuteIndirect` whose signature sets root constants costs far more on
+-/// some cards than a plain one (an RTX 3060: about 13 ms of the card's time
+-/// a frame for ~1,000 of them, of which ~1 a frame passes 65,535), and
+-/// nothing is clamped to 65,535 either way.
+-fn spread_lean_on() -> bool {
+-    /// 0 off, 1 on, 2 in turn.
+-    static MODE: std::sync::OnceLock<u8> = std::sync::OnceLock::new();
+-    match *MODE.get_or_init(|| match std::env::var("VICTORY_SPREAD_LEAN").as_deref() {
+-        Ok("1") => 1,
+-        Ok("alt") => 2,
+-        _ => 0,
+-    }) {
+-        0 => false,
+-        1 => true,
+-        _ => {
+-            static EPOCH: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+-            let on = (EPOCH.get_or_init(std::time::Instant::now).elapsed().as_secs() / 20) % 2 == 1;
+-            static LAST: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(2);
+-            if LAST.swap(u8::from(on), Ordering::Relaxed) != u8::from(on) {
+-                tracing::info!(
+-                    "indirect dispatches spread across z run lean from now (VICTORY_SPREAD_LEAN=alt): {}",
+-                    if on { "ON" } else { "off, every record through the spread signature" }
+-                );
+-            }
+-            on
+-        }
+-    }
+-}
+-
 -/// The command signature of a spread dispatch: two root constants (row,
 -/// asked x) at `index` of root parameter `param`, then the dispatch; 20
 -/// bytes a record (the clamp's spread layout). Made once per root
@@ -1120,10 +1174,64 @@ index 7ad742f84..b93114ff4 100644
  // than when the recording thread did it all; with a backlog it is earlier,
  // since the pass has the whole frame instead of a slice of it.
 diff --git a/crates/victory-gpu/src/host.rs b/crates/victory-gpu/src/host.rs
-index 7c3973f41..081566ab2 100644
+index 0bb9cac91..21e9ecc11 100644
 --- a/crates/victory-gpu/src/host.rs
 +++ b/crates/victory-gpu/src/host.rs
-@@ -4728,6 +4728,7 @@ mod relay_tests {
+@@ -2908,9 +2908,6 @@ static NAMED: [std::sync::atomic::AtomicU64; 2] = [const { std::sync::atomic::At
+ /// count a record asked for, and the groups asked in all (from the lists'
+ /// budget buffers, a run late).
+ static MESH_GROUPS: [std::sync::atomic::AtomicU64; 2] = [const { std::sync::atomic::AtomicU64::new(0) }; 2];
+-/// Spread-eligible indirect compute record counts since the last frame line:
+-/// `[over_65535, at_or_under_65535, extra_groups_above_65535]`.
+-static SPREAD_ASKED: [std::sync::atomic::AtomicU64; 3] = [const { std::sync::atomic::AtomicU64::new(0) }; 3];
+ 
+ /// Whether a list's indirect-work budget lives in the card's own memory
+ /// (`VICTORY_INDIRECT_CARD_BUDGET=0` keeps it in memory the CPU maps, as
+@@ -3043,7 +3040,10 @@ const SCRATCH_CHUNK: u64 = 4 << 20;
+ /// lists put a few constants or a rectangle's corners there, and every
+ /// list that did took 4 MiB of the PC's memory for it.
+ const SCRATCH_FIRST: u64 = 256 << 10;
+-/// The most bytes of chunks kept while no list holds them, unless set.
++/// The most bytes of chunks kept while no list holds them, unless
++/// `VICTORY_SCRATCH_SPARE_MB` says otherwise ([`spare_most`]).
++/// Kept at 128 MiB here (#1367 raised it to 512): the PC runs short of memory beside the title;
++/// VICTORY_SCRATCH_SPARE_MB raises it for a measured test.
+ const SPARE_MOST: u64 = 128 << 20;
+ 
+ /// The most bytes of scratch chunks kept while no list (and no send to a
+@@ -3138,12 +3138,20 @@ fn take_chunk(host: &Host, size: u64) -> Option<(Chunk, u64)> {
+         crate::bus::ALIVE[0].fetch_add(1, Ordering::Relaxed);
+         crate::bus::ALIVE[1].fetch_add(size, Ordering::Relaxed);
+     }
+-    Some(Chunk {
++    let chunk = Chunk {
+         _buffer: buffer,
+         data: data as usize,
+         gpu,
+         card: card.then_some(size),
+-    })
++    };
++    Some((chunk, size))
++}
++
++/// Whether a list's small first chunk may be a kept 4 MiB one
++/// (`VICTORY_SCRATCH_ANY_SIZE`, on; `=0`: only one of its own size).
++fn scratch_any_size() -> bool {
++    static ON: OnceLock<bool> = OnceLock::new();
++    *ON.get_or_init(|| std::env::var_os("VICTORY_SCRATCH_ANY_SIZE").is_none_or(|v| v != "0"))
+ }
+ 
+ /// A list is done with `chunks` (it was reset after its submissions ran,
+@@ -3893,7 +3901,7 @@ impl Stager {
+             let chunk = take_chunk(host, SCRATCH_CHUNK);
+             more_add(more::SEND_CHUNKS, taking.elapsed().as_nanos() as u64);
+             more_add(more::SEND_CHUNKS_N, 1);
+-            let chunk = chunk?;
++            let (chunk, _) = chunk?;
+             CARD_STAGE[0].fetch_add(1, Ordering::Relaxed);
+             CARD_STAGE[1].fetch_add(SCRATCH_CHUNK, Ordering::Relaxed);
+             self.chunks.push((chunk, SCRATCH_CHUNK));
+@@ -4746,6 +4754,7 @@ mod relay_tests {
                  order: (0..lists).collect(),
                  card: None,
                  back: Vec::new(),
@@ -1131,7 +1239,7 @@ index 7c3973f41..081566ab2 100644
                  read_back: Vec::new(),
                  freed: false,
                  picks: false,
-@@ -7073,6 +7074,138 @@ mod fill_check {
+@@ -7091,6 +7100,138 @@ mod fill_check {
      }
  }
  
@@ -1270,7 +1378,7 @@ index 7c3973f41..081566ab2 100644
  /// Per copy that shaders of flights may be writing (`Shadow::writes_pending`),
  /// the span of what `runs` refresh in it (title addresses; a flush brings
  /// that much up to date at most).
-@@ -7113,6 +7246,40 @@ fn refresh_spans(runs: &[&HostList]) -> Vec<(std::sync::Arc<crate::shadow::Shado
+@@ -7131,6 +7272,40 @@ fn refresh_spans(runs: &[&HostList]) -> Vec<(std::sync::Arc<crate::shadow::Shado
          more_add(more::STALE_STEPS, steps);
          more_add(more::STALE_COPIES, at.len() as u64);
          more_add(more::STALE_SPANS, spans.len() as u64);
@@ -1311,7 +1419,7 @@ index 7c3973f41..081566ab2 100644
      } else {
          for list in runs {
              for step in &list.deferred().copies {
-@@ -7170,6 +7337,35 @@ fn stale_timed(runs: &[&HostList], ns: &mut u64) -> bool {
+@@ -7188,6 +7363,35 @@ fn stale_timed(runs: &[&HostList], ns: &mut u64) -> bool {
      stale
  }
  
@@ -1347,7 +1455,7 @@ index 7c3973f41..081566ab2 100644
  /// Whether the list that brings copies in the card's memory up to date
  /// records its work in three steps over all the copies: every changed
  /// range copied up, then every state change in one call, then every hash
-@@ -8444,7 +8640,7 @@ impl Host {
+@@ -8486,7 +8690,7 @@ impl Host {
      }
  
      fn make_card_work(&self) -> windows::core::Result<CardWork> {
@@ -1356,7 +1464,7 @@ index 7c3973f41..081566ab2 100644
          let list = || self.make_prelude().ok_or_else(windows::core::Error::empty);
          // A megabyte of results: 262,144 pieces, 16 GB of declared ranges
          // in one submission.
-@@ -8976,7 +9172,7 @@ impl Host {
+@@ -9018,7 +9222,7 @@ impl Host {
                          for run in runs {
                              let constants = [run.first, run.skew, shadow.card_hashed().unwrap_or(size) as u32, run.pieces, 0, 0];
                              list.SetComputeRoot32BitConstants(0, 6, constants.as_ptr().cast(), 0);
@@ -1365,7 +1473,7 @@ index 7c3973f41..081566ab2 100644
                          }
                          // Read by the hashing (after the barrier above, or
                          // promoted from the common state); its hashes and
-@@ -10509,12 +10705,20 @@ impl Host {
+@@ -10551,12 +10755,20 @@ impl Host {
          }
          // Textures uploaded ahead (`crate::heap_worker`): their lists run
          // before the title's.
@@ -1389,7 +1497,7 @@ index 7c3973f41..081566ab2 100644
          late_threads();
          let (picks, sent) = {
              let runs: Vec<&HostList> = order.iter().map(|&i| lists[i].host()).collect();
-@@ -11210,6 +11414,7 @@ impl Host {
+@@ -11252,6 +11464,7 @@ impl Host {
          sync_along();
          submitting(1, runs.len());
          let settling_before = std::time::Instant::now();
@@ -1397,7 +1505,7 @@ index 7c3973f41..081566ab2 100644
          // Flights in the air ([`late`]): a submission that is waited for
          // settles them first, one sent ahead only if preparing it reads
          // what they write.
-@@ -11457,11 +11662,6 @@ impl Host {
+@@ -11499,11 +11712,6 @@ impl Host {
          prep_add(prep::ASK_END, ending);
          mark.to(work::STEPS);
          part = prep_part(2, part);
@@ -1409,7 +1517,7 @@ index 7c3973f41..081566ab2 100644
          // The snapshots of the ranges shaders may write, if they were left
          // for now (`crate::shadow::wide_back`): the refreshes are done, the
          // lists have not gone to the card.
-@@ -12162,6 +12362,13 @@ impl HostList {
+@@ -12204,6 +12412,13 @@ impl HostList {
      }
  
      pub(crate) fn close(&self) {
@@ -1423,7 +1531,7 @@ index 7c3973f41..081566ab2 100644
          // A wait owed (`VICTORY_BARRIER_LAZY_UAV`): what the list read goes
          // before what later lists write.
          if self.bar.closing() {
-@@ -12237,6 +12444,7 @@ impl HostList {
+@@ -12279,6 +12494,7 @@ impl HostList {
          let started = std::time::Instant::now();
          self._alive.used();
          self.bar.reset();
@@ -1431,7 +1539,44 @@ index 7c3973f41..081566ab2 100644
          *self.deferred() = Deferred::default();
          if crate::gpuprof::on() {
              self.prof.lock().unwrap_or_else(|e| e.into_inner()).clear();
-@@ -14014,11 +14222,7 @@ impl HostList {
+@@ -13792,17 +14008,9 @@ impl HostList {
+                 Box::new(move || unsafe {
+                 let words = at as *mut u32;
+                 let (largest, all) = (words.add(1).read_volatile(), words.add(2).read_volatile());
+-                let (over, under, extra) = (
+-                    words.add(3).read_volatile(),
+-                    words.add(4).read_volatile(),
+-                    words.add(5).read_volatile(),
+-                );
+                 MESH_GROUPS[0].fetch_max(u64::from(largest), Ordering::Relaxed);
+                 MESH_GROUPS[1].fetch_add(u64::from(all), Ordering::Relaxed);
+-                SPREAD_ASKED[0].fetch_add(u64::from(over), Ordering::Relaxed);
+-                SPREAD_ASKED[1].fetch_add(u64::from(under), Ordering::Relaxed);
+-                SPREAD_ASKED[2].fetch_add(u64::from(extra), Ordering::Relaxed);
+-                for k in 0..6 {
++                for k in 0..3 {
+                     words.add(k).write_volatile(0);
+                 }
+             }),
+@@ -13839,7 +14047,7 @@ impl HostList {
+         };
+         // SAFETY: a live buffer.
+         let at = unsafe { card.GetGPUVirtualAddress() };
+-        let zeros = [0u64, 4, 8, 12, 16, 20].map(|offset| D3D12_WRITEBUFFERIMMEDIATE_PARAMETER {
++        let zeros = [0u64, 4, 8].map(|offset| D3D12_WRITEBUFFERIMMEDIATE_PARAMETER {
+             Dest: at + offset,
+             Value: 0,
+         });
+@@ -13880,7 +14088,7 @@ impl HostList {
+                 D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                 D3D12_RESOURCE_STATE_COPY_SOURCE,
+             )]);
+-            self.list.CopyBufferRegion(mapped, 4, card, 4, 20);
++            self.list.CopyBufferRegion(mapped, 4, card, 4, 8);
+             self.list.ResourceBarrier(&[transition(
+                 card,
+                 D3D12_RESOURCE_STATE_COPY_SOURCE,
+@@ -14093,11 +14301,7 @@ impl HostList {
                          add(C::Copies, 1);
                          add(C::CopyBytes, len as u64);
                      }
@@ -1444,7 +1589,7 @@ index 7c3973f41..081566ab2 100644
                      #[cfg(feature = "diagnostics")]
                      fill_check::copy_runs(dst, src, len);
                      #[cfg(feature = "diagnostics")]
-@@ -14064,7 +14268,7 @@ impl HostList {
+@@ -14143,7 +14347,7 @@ impl HostList {
                      }
                      #[cfg(feature = "diagnostics")]
                      let _reads_as = crate::backreads::reading_as(crate::backreads::TITLE_COPY, 0);
@@ -1453,7 +1598,7 @@ index 7c3973f41..081566ab2 100644
                      // Under flights' shader writes ([`fill_from_copy`]):
                      // what they wrote comes from the copies they wrote.
                      if !batch.from_copy.is_empty() {
-@@ -14103,6 +14307,9 @@ impl HostList {
+@@ -14182,6 +14386,9 @@ impl HostList {
                          if matches!(step, Step::Host(_, true)) {
                              batch.flush_textures();
                          }
@@ -1463,7 +1608,7 @@ index 7c3973f41..081566ab2 100644
                      }
                      work();
                      // It wrote title memory, where is not known here: the
-@@ -14144,6 +14351,11 @@ impl HostList {
+@@ -14223,6 +14430,11 @@ impl HostList {
                      if batch.texture_due(staging) {
                          if wide_textures() {
                              batch.textures_due.push(staging.clone());
@@ -1475,7 +1620,7 @@ index 7c3973f41..081566ab2 100644
                          } else {
                              staging.refresh();
                          }
-@@ -14363,6 +14575,10 @@ struct Batch {
+@@ -14442,6 +14654,10 @@ struct Batch {
      /// shrink while the submission lock is held (flights land, none joins):
      /// a copy clear of these is clear of the flights'.
      fresh_written: Option<Vec<(usize, usize)>>,
@@ -1486,7 +1631,7 @@ index 7c3973f41..081566ab2 100644
  }
  
  /// [`back_no_wait`]: before a title copy into `[dst, dst + len)` runs at
-@@ -14744,7 +14960,6 @@ impl Batch {
+@@ -14823,7 +15039,6 @@ impl Batch {
          self.check_textures();
          self.flush();
          self.textures.clear();
@@ -1494,7 +1639,7 @@ index 7c3973f41..081566ab2 100644
          // Where it writes is not known: no copy counts as up to date.
          self.current.clear();
      }
-@@ -14757,7 +14972,6 @@ impl Batch {
+@@ -14836,7 +15051,6 @@ impl Batch {
          self.check_textures();
          self.flush();
          self.textures.clear();
@@ -1502,7 +1647,7 @@ index 7c3973f41..081566ab2 100644
          let end = at + len;
          self.current.retain(|_, entry| {
              let (from, to) = (entry.1, entry.2);
-@@ -14774,6 +14988,50 @@ impl Batch {
+@@ -14853,6 +15067,50 @@ impl Batch {
          });
      }
  
@@ -1553,7 +1698,7 @@ index 7c3973f41..081566ab2 100644
      /// The nanoseconds of flushes the steps set off so far (refreshes,
      /// fills, texture checks): taken out of the steps' own time.
      fn taken_ns(&self) -> u64 {
-@@ -14852,6 +15110,7 @@ impl Batch {
+@@ -14931,6 +15189,7 @@ impl Batch {
      }
  
      fn flush_all(&mut self) {
@@ -1561,7 +1706,7 @@ index 7c3973f41..081566ab2 100644
          self.index.clear();
          // One write-watch asking for the copies that lie close together,
          // not one per copy.
-@@ -15041,74 +15300,6 @@ fn fills_plain() -> bool {
+@@ -15120,74 +15379,6 @@ fn fills_plain() -> bool {
      }
  }
  
@@ -1636,7 +1781,7 @@ index 7c3973f41..081566ab2 100644
  /// Whether a submission's texture checks (`crate::texture::Staging::refresh`:
  /// the write watch or guards asked, then the memory hashed and detiled if
  /// it may have changed) are gathered between writes of ours and run on the
-@@ -15970,7 +16161,7 @@ impl Meter {
+@@ -16049,7 +16240,7 @@ impl Meter {
                  let [behind, oldest, refreshed] =
                      [0, 1, 2].map(|i| crate::descriptor::host::PAGE_BEHIND[i].load(Ordering::Relaxed));
                  tracing::info!(
@@ -1645,7 +1790,7 @@ index 7c3973f41..081566ab2 100644
                      bytes >> 20,
                      if mode & 1 != 0 { "opened, taken again" } else { "left as they were" },
                      if mode & 4 != 0 { "told as well" } else if mode & 2 != 0 { "their texture slots told" } else { "counted only" },
-@@ -16295,6 +16486,11 @@ impl Host {
+@@ -16374,6 +16565,11 @@ impl Host {
              }
              let presented = p.swap_chain.Present(0, DXGI_PRESENT(0));
              if presented.is_err() {
@@ -1657,7 +1802,7 @@ index 7c3973f41..081566ab2 100644
                  // A refused present shows nothing (the window keeps what it
                  // had): said, a few times.
                  static SAID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-@@ -17774,7 +17970,7 @@ void main() {
+@@ -17853,7 +18049,7 @@ void main() {
              eprintln!("inflight_tests: skipped, the copy is not in the card's memory (VICTORY_CARD_BUFFERS_MIN_MB=1)");
              return;
          }
@@ -1667,7 +1812,7 @@ index 7c3973f41..081566ab2 100644
          let (root, pso): (ID3D12RootSignature, ID3D12PipelineState) = unsafe {
              let root: ID3D12RootSignature = host.device.CreateRootSignature(0, &code).expect("a root signature");
 diff --git a/crates/victory-gpu/src/indirect.rs b/crates/victory-gpu/src/indirect.rs
-index 777fa700f..d7cb25613 100644
+index c82aefe36..d7cb25613 100644
 --- a/crates/victory-gpu/src/indirect.rs
 +++ b/crates/victory-gpu/src/indirect.rs
 @@ -50,6 +50,9 @@ cbuffer Record : register(b0) {
@@ -1692,7 +1837,7 @@ index 777fa700f..d7cb25613 100644
      }
      // Threads past the records take part in the group's charge (cost 0)
      // and store nothing.
-@@ -190,15 +193,9 @@ void main(uint3 id : SV_DispatchThreadID, uint gi : SV_GroupIndex) {
+@@ -190,16 +193,9 @@ void main(uint3 id : SV_DispatchThreadID, uint gi : SV_GroupIndex) {
      // is a count of four bytes, or the source itself, and is not read here.)
      [branch]
      if ((rec_has_count & 4u) != 0) {
@@ -1701,30 +1846,90 @@ index 777fa700f..d7cb25613 100644
      }
      uint dst_at = id.x * stride;
 -    bool spread = (has_count & 8u) != 0;
+-    bool lean = spread && (has_count & 32u) != 0;
 -    uint row = 0;
 -    uint asked_x = 0;
--    if (spread) {
+-    if (spread && !lean) {
 -        dst_at = id.x * 20u;
 -    }
      uint cost = 0;
      uint asked = 0;
      uint2 draw_counts = uint2(0, 0);
-@@ -262,8 +259,8 @@ void main(uint3 id : SV_DispatchThreadID, uint gi : SV_GroupIndex) {
+@@ -207,10 +203,6 @@ void main(uint3 id : SV_DispatchThreadID, uint gi : SV_GroupIndex) {
+     if (gi == 0) {
+         largest_asked = 0;
+         all_asked = 0;
+-        spread_over = 0;
+-        spread_under = 0;
+-        spread_extra = 0;
+-        spread_any = 0;
+     }
+     if (active && kind <= 1) {
+         // Draws: vertex or index count, then instances.
+@@ -267,20 +259,11 @@ void main(uint3 id : SV_DispatchThreadID, uint gi : SV_GroupIndex) {
      GroupMemoryBarrierWithGroupSync();
      if (active && kind > 3) {
          // Diagnostics, in the budget buffer's next words (below): the
--        // largest group count a mesh or compute record asked for, and the
--        // groups asked in all.
+-        // largest group count a mesh or compute record asked for, the
+-        // groups asked in all, and of the spread-eligible compute records
+-        // those spread (and their groups past 65,535) and the rest.
 +        // largest group count a mesh record asked for, and the groups
 +        // asked in all.
          uint was;
          InterlockedMax(largest_asked, asked, was);
          InterlockedAdd(all_asked, min(asked, 1u << 24), was);
-@@ -347,14 +344,9 @@ void main(uint3 id : SV_DispatchThreadID, uint gi : SV_GroupIndex) {
+-        if (spread) {
+-            if (row != 0u) {
+-                InterlockedAdd(spread_over, 1u, was);
+-                InterlockedAdd(spread_extra, min(asked_x - 65535u, 1u << 24), was);
+-            } else {
+-                InterlockedAdd(spread_under, 1u, was);
+-            }
+-        }
+     }
+     // The group's own records: none for a group past a count buffer's
+     // count (an execution may ask for thousands and count a few), which
+@@ -324,16 +307,6 @@ void main(uint3 id : SV_DispatchThreadID, uint gi : SV_GroupIndex) {
+         uint was;
+         budget.InterlockedMax(4, largest_asked, was);
+         budget.InterlockedAdd(8, all_asked, was);
+-        if (spread) {
+-            budget.InterlockedAdd(12, spread_over, was);
+-            budget.InterlockedAdd(16, spread_under, was);
+-            budget.InterlockedAdd(20, spread_extra, was);
+-        }
+-    }
+-    // Lean: the whole batch is this one group (the caller sees to that), so
+-    // its first thread writes the predicate alone.
+-    if (lean && gi == 0) {
+-        dst_args.Store2((records * 12u + 7u) & ~7u, uint2(spread_any != 0u ? 1u : 0u, 0u));
+     }
+     if (!active) {
+         // The host runs every record of a split dispatch (the count is the
+@@ -345,6 +318,7 @@ void main(uint3 id : SV_DispatchThreadID, uint gi : SV_GroupIndex) {
+         }
+         return;
+     }
++    bool over = fits[gi] == 0;
+     if (kind <= 1) {
+         if (over) {
+             draw_counts = uint2(0, 0);
+@@ -369,25 +343,10 @@ void main(uint3 id : SV_DispatchThreadID, uint gi : SV_GroupIndex) {
+     } else {
          if (over) {
              groups = uint3(0, 0, 0);
+-            row = 0;
+-            asked_x = 0;
          }
--        if (spread) {
+-        if (lean) {
+-            // Each record in both arrays, empty in the one it does not run
+-            // from (an empty record dispatches nothing).
+-            uint spread_at = ((records * 12u + 7u) & ~7u) + 8u + id.x * 20u;
+-            bool spread_it = row != 0u;
+-            dst_args.Store3(id.x * 12u, spread_it ? uint3(0u, 0u, 0u) : groups);
+-            dst_args.Store2(spread_at, spread_it ? uint2(row, asked_x) : uint2(0u, 0u));
+-            dst_args.Store3(spread_at + 8u, spread_it ? groups : uint3(0u, 0u, 0u));
+-        } else if (spread) {
 -            dst_args.Store2(dst_at, uint2(row, asked_x));
 -            dst_args.Store3(dst_at + 8u, groups);
 -        } else {
@@ -1738,7 +1943,7 @@ index 777fa700f..d7cb25613 100644
          }
      }
  }
-@@ -526,13 +518,14 @@ pub(crate) fn bound(
+@@ -559,59 +518,14 @@ pub(crate) fn bound(
      src: (&ID3D12Resource, u64),
      count: Option<(&ID3D12Resource, u64)>,
      spec: (u32, u32, u32),
@@ -1750,12 +1955,58 @@ index 777fa700f..d7cb25613 100644
      // What the clamped records take (a split dispatch's are bigger).
      let bytes = scratch_bytes(spec)?;
      let (c, budget, dst) = (clamp()?, list.budget()?, list.indirect_scratch(bytes)?);
--    clamp_into(list, c, &dst, budget, src, count, spec, false, spread).then_some(dst)
+-    let mode = if spread { SPREAD_CLASSIC } else { SPREAD_OFF };
+-    clamp_into(list, c, &dst, budget, src, count, spec, false, mode).then_some(dst)
+-}
+-
+-/// Spread modes of the clamp: none; every dispatch record written as
+-/// [row, asked x, x, y, z] for the spread command signature; and lean
+-/// ([`bound_lean`]).
+-const SPREAD_OFF: u8 = 0;
+-const SPREAD_CLASSIC: u8 = 1;
+-const SPREAD_LEAN: u8 = 2;
+-
+-/// Most records a lean clamp takes: one group of the clamp, whose first
+-/// thread alone writes the predicate word.
+-pub(crate) const LEAN_RECORDS: u32 = 64;
+-
+-/// The scratch layout of a lean clamp of `records` dispatch records: the
+-/// predicate word's offset, the spread records' offset, and the bytes in
+-/// all. Plain [x, y, z] records, 12 bytes each, take the bytes before the
+-/// predicate.
+-pub(crate) fn lean_layout(records: u32) -> (u64, u64, u64) {
+-    let n = u64::from(records.max(1));
+-    let pred = (n * 12).next_multiple_of(8);
+-    (pred, pred + 8, pred + 8 + n * 20)
+-}
+-
+-/// [`bound`] for a spread dispatch, lean (`VICTORY_SPREAD_LEAN`): the
+-/// records within 65,535 groups in x go to plain [x, y, z] records for the
+-/// plain dispatch signature, the ones past it to [row, asked x, x, y, z]
+-/// records for the spread signature, and a predicate word between says
+-/// whether any record that runs is spread. Every record is in both arrays,
+-/// empty in the one it does not run from. Returns the scratch buffer with
+-/// the predicate's and the spread records' offsets; `None` for more than
+-/// [`LEAN_RECORDS`] records (the caller takes [`bound`]'s spread then).
+-pub(crate) fn bound_lean(
+-    list: &HostList,
+-    src: (&ID3D12Resource, u64),
+-    count: Option<(&ID3D12Resource, u64)>,
+-    spec: (u32, u32, u32),
+-) -> Option<(ID3D12Resource, u64, u64)> {
+-    if spec.0 != 2 || spec.2 == 0 || spec.2 > LEAN_RECORDS {
+-        return None;
+-    }
+-    end_window(list);
+-    validate_layout(spec, src.1, count.map(|(_, off)| off))?;
+-    let (pred, spread_at, bytes) = lean_layout(spec.2);
+-    let (c, budget, dst) = (clamp()?, list.budget()?, list.indirect_scratch(bytes)?);
+-    clamp_into(list, c, &dst, budget, src, count, spec, false, SPREAD_LEAN).then_some((dst, pred, spread_at))
 +    clamp_into(list, c, &dst, budget, src, count, spec, false).then_some(dst)
  }
  
  /// [`bound`] for a window of records clamped ahead of the draws that will
-@@ -550,10 +543,11 @@ pub(crate) fn bound_ahead(
+@@ -629,10 +543,11 @@ pub(crate) fn bound_ahead(
      src: (&ID3D12Resource, u64),
      spec: (u32, u32, u32),
  ) -> Option<ID3D12Resource> {
@@ -1763,16 +2014,16 @@ index 777fa700f..d7cb25613 100644
      validate_layout(spec, src.1, None)?;
      let bytes = scratch_bytes(spec)?;
      let (c, budget, dst) = (clamp()?, list.budget()?, list.indirect_scratch(bytes)?);
--    clamp_into(list, c, &dst, budget, src, None, spec, true, false).then_some(dst)
+-    clamp_into(list, c, &dst, budget, src, None, spec, true, SPREAD_OFF).then_some(dst)
 +    clamp_into(list, c, &dst, budget, src, None, spec, true).then_some(dst)
  }
  
  /// [`record_clamp_as`] into `list`'s scratch buffer `dst`, from the state
-@@ -569,10 +563,9 @@ fn clamp_into(
+@@ -648,10 +563,9 @@ fn clamp_into(
      count: Option<(&ID3D12Resource, u64)>,
      spec: (u32, u32, u32),
      ahead: bool,
--    spread: bool,
+-    spread: u8,
  ) -> bool {
      let before = list.indirect_state(dst);
 -    let recorded = record_clamp_with(c, &list.list, (dst, before), budget, src, count, spec, ahead, spread, true);
@@ -1780,31 +2031,32 @@ index 777fa700f..d7cb25613 100644
      if recorded {
          list.indirect_readable(dst);
          clamp_fenced(list);
-@@ -607,12 +600,11 @@ fn record_clamp_as(
+@@ -686,13 +600,11 @@ fn record_clamp_as(
      spec: (u32, u32, u32),
      ahead: bool,
  ) -> bool {
--    record_clamp_with(c, l, dst, budget, src, count, spec, ahead, false, false)
+-    record_clamp_with(c, l, dst, budget, src, count, spec, ahead, SPREAD_OFF, false)
 +    record_clamp_with(c, l, dst, budget, src, count, spec, ahead, false)
  }
  
--/// [`record_clamp_as`]; `spread`: dispatch records past 65,535 groups in x
--/// are spread across z, every record written as [row, asked x, x, y, z]
--/// (20 bytes) for `crate::draw`'s spread command signature.
+-/// [`record_clamp_as`]; `spread`: [`SPREAD_CLASSIC`]: dispatch records past
+-/// 65,535 groups in x are spread across z, every record written as
+-/// [row, asked x, x, y, z] (20 bytes) for `crate::draw`'s spread command
+-/// signature; [`SPREAD_LEAN`]: [`bound_lean`]'s layout.
 +/// [`record_clamp_as`]; `lean`: with `VICTORY_CLAMP_LEAN`, the pass ends
 +/// with `dst`'s own transition alone ([`clamp_lean`]; the list's clamps).
  #[allow(clippy::too_many_arguments)]
  fn record_clamp_with(
      c: &Clamp,
-@@ -623,7 +615,6 @@ fn record_clamp_with(
+@@ -703,7 +615,6 @@ fn record_clamp_with(
      count: Option<(&ID3D12Resource, u64)>,
      (kind, stride, records): (u32, u32, u32),
      ahead: bool,
--    spread: bool,
+-    spread: u8,
      lean: bool,
  ) -> bool {
      let Some(bytes) = validate_layout(
-@@ -669,14 +660,7 @@ fn record_clamp_with(
+@@ -749,17 +660,7 @@ fn record_clamp_with(
          }
          None => (src_gpu, 0u32, 0u32),
      };
@@ -1813,14 +2065,17 @@ index 777fa700f..d7cb25613 100644
 -        stride,
 -        records,
 -        args_offset,
--        has_count | (u32::from(ahead) << 1) | (u32::from(spread && kind == 2) << 3),
+-        has_count
+-            | (u32::from(ahead) << 1)
+-            | (u32::from(spread != SPREAD_OFF && kind == 2) << 3)
+-            | (u32::from(spread == SPREAD_LEAN && kind == 2) << 5),
 -        count_offset,
 -    ];
 +    let constants = [kind, stride, records, args_offset, has_count | (u32::from(ahead) << 1), count_offset];
      // SAFETY: an open list; our root signature and pipeline; live source,
      // count, scratch destination, and budget buffers. `src` and `count` stay
      // in `COMMON` / `GENERIC_READ` via implicit buffer promotion while `dst`
-@@ -724,7 +708,7 @@ fn record_clamp_with(
+@@ -807,7 +708,7 @@ fn record_clamp_with(
              l.SetComputeRootUnorderedAccessView(4, budget);
              l.Dispatch(records.div_ceil(64), 1, 1);
          }
@@ -1829,7 +2084,7 @@ index 777fa700f..d7cb25613 100644
      }
      crate::cardmeter::end(l, timed);
      true
-@@ -2657,63 +2641,6 @@ void main() {
+@@ -2740,355 +2641,6 @@ void main() {
          assert_eq!(validate_layout((1, 20, u32::MAX), 0, None), None);
      }
  
@@ -1870,7 +2125,7 @@ index 777fa700f..d7cb25613 100644
 -            None,
 -            (KIND_DISPATCH, STRIDE, records.len() as u32),
 -            false,
--            true,
+-            SPREAD_CLASSIC,
 -            false,
 -        ));
 -        // SAFETY: open command list; the clamp left `dst_buf` in `INDIRECT_ARGUMENT`.
@@ -1890,10 +2145,302 @@ index 777fa700f..d7cb25613 100644
 -        assert_eq!(&out[10..15], &[32_769, 65_537, 32_769, 1, 2], "65,537 x 1 x 1: spread");
 -    }
 -
+-    #[test]
+-    fn warp_spread_lean_routes_small_and_large_records_and_counts_them() {
+-        let Some(mut warp) = WarpHarness::new() else {
+-            return;
+-        };
+-        const KIND_DISPATCH: u32 = 2;
+-        const STRIDE: u32 = 12;
+-
+-        // Batch 1: mixed small + large + boundary 65,535.
+-        let mixed: [[u32; 3]; 3] = [[100, 2, 1], [100_000, 1, 1], [65_535, 1, 1]];
+-        let (pred_off, spread_off, total) = lean_layout(mixed.len() as u32);
+-        assert_eq!((pred_off, spread_off), (40, 48));
+-        let (src_buf, src_ptr, _) = warp.shared_buffer(4096);
+-        let (_budget_buf, budget_ptr, budget_gpu) = warp.shared_buffer(256);
+-        let (readback_buf, readback_ptr, _) = warp.shared_buffer(4096);
+-        let dst_buf = warp.default_uav(4096);
+-        // SAFETY: buffers mapped with the capacities above.
+-        unsafe {
+-            for (i, r) in mixed.iter().enumerate() {
+-                for (w, v) in r.iter().enumerate() {
+-                    (src_ptr as *mut u32).add(i * 3 + w).write_volatile(*v);
+-                }
+-            }
+-            std::ptr::write_bytes(budget_ptr, 0, 256);
+-            std::ptr::write_bytes(readback_ptr, 0, 4096);
+-        }
+-        assert!(record_clamp_with(
+-            &warp.clamp,
+-            &warp.list,
+-            (&dst_buf, D3D12_RESOURCE_STATE_COMMON),
+-            budget_gpu,
+-            (&src_buf, 0),
+-            None,
+-            (KIND_DISPATCH, STRIDE, mixed.len() as u32),
+-            false,
+-            SPREAD_LEAN,
+-            false,
+-        ));
+-        // SAFETY: open command list; clamp left `dst_buf` in `INDIRECT_ARGUMENT`.
+-        unsafe {
+-            warp.list.ResourceBarrier(&[transition(
+-                &dst_buf,
+-                D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT,
+-                D3D12_RESOURCE_STATE_COPY_SOURCE,
+-            )]);
+-            warp.list.CopyBufferRegion(&readback_buf, 0, &dst_buf, 0, total);
+-        }
+-        warp.submit_and_wait();
+-        // SAFETY: GPU work complete; mapped host buffers.
+-        let (out, budget_words) = unsafe {
+-            (
+-                std::slice::from_raw_parts(readback_ptr.cast::<u32>().cast_const(), (total / 4) as usize).to_vec(),
+-                std::slice::from_raw_parts(budget_ptr.cast::<u32>().cast_const(), 6).to_vec(),
+-            )
+-        };
+-        assert_eq!(&out[0..3], &[100, 2, 1], "small record goes to plain");
+-        assert_eq!(&out[3..6], &[0, 0, 0], "large record is zeroed in plain");
+-        assert_eq!(&out[6..9], &[65_535, 1, 1], "65,535 boundary goes to plain");
+-        assert_eq!(&out[10..12], &[1, 0], "predication word non-zero on mixed batch");
+-        assert_eq!(&out[12..17], &[0, 0, 0, 0, 0], "small record is zeroed in spread");
+-        assert_eq!(&out[17..22], &[50_000, 100_000, 50_000, 1, 2], "100k goes to spread");
+-        assert_eq!(&out[22..27], &[0, 0, 0, 0, 0], "65,535 is zeroed in spread");
+-        assert_eq!(budget_words[3], 1, "spread_over");
+-        assert_eq!(budget_words[4], 2, "spread_under");
+-        assert_eq!(budget_words[5], 34_465, "spread_extra");
+-
+-        // Batch 2: all-small batch resets `pred_off` to 0 even when reusing `dst_buf` cleanly.
+-        let small: [[u32; 3]; 2] = [[100, 2, 1], [256, 1, 1]];
+-        let (pred_off_s, _, total_s) = lean_layout(small.len() as u32);
+-        assert_eq!(pred_off_s, 24);
+-        // SAFETY: buffers mapped with the capacities above.
+-        unsafe {
+-            for (i, r) in small.iter().enumerate() {
+-                for (w, v) in r.iter().enumerate() {
+-                    (src_ptr as *mut u32).add(i * 3 + w).write_volatile(*v);
+-                }
+-            }
+-            std::ptr::write_bytes(budget_ptr, 0, 256);
+-            std::ptr::write_bytes(readback_ptr, 0, 4096);
+-        }
+-        assert!(record_clamp_with(
+-            &warp.clamp,
+-            &warp.list,
+-            (&dst_buf, D3D12_RESOURCE_STATE_COPY_SOURCE),
+-            budget_gpu,
+-            (&src_buf, 0),
+-            None,
+-            (KIND_DISPATCH, STRIDE, small.len() as u32),
+-            false,
+-            SPREAD_LEAN,
+-            false,
+-        ));
+-        // SAFETY: open command list.
+-        unsafe {
+-            warp.list.ResourceBarrier(&[transition(
+-                &dst_buf,
+-                D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT,
+-                D3D12_RESOURCE_STATE_COPY_SOURCE,
+-            )]);
+-            warp.list.CopyBufferRegion(&readback_buf, 0, &dst_buf, 0, total_s);
+-        }
+-        warp.submit_and_wait();
+-        // SAFETY: GPU work complete.
+-        let (out_s, budget_s) = unsafe {
+-            (
+-                std::slice::from_raw_parts(readback_ptr.cast::<u32>().cast_const(), (total_s / 4) as usize).to_vec(),
+-                std::slice::from_raw_parts(budget_ptr.cast::<u32>().cast_const(), 6).to_vec(),
+-            )
+-        };
+-        assert_eq!(&out_s[0..6], &[100, 2, 1, 256, 1, 1]);
+-        assert_eq!(&out_s[6..8], &[0, 0], "predication word zeroed on all-small batch");
+-        assert_eq!(budget_s[3], 0, "spread_over");
+-        assert_eq!(budget_s[4], 2, "spread_under");
+-        assert_eq!(budget_s[5], 0, "spread_extra");
+-    }
+-
+-    #[test]
+-    fn warp_spread_lean_executes_same_group_ids_as_spread_for_100k_groups() {
+-        let Some(mut warp) = WarpHarness::new() else {
+-            return;
+-        };
+-        const SHADER: &str = r#"
+-#define RS "RootConstants(num32BitConstants=2, b0), UAV(u0)"
+-cbuffer Spread : register(b0) { uint row; uint asked_x; };
+-RWByteAddressBuffer out_buf : register(u0);
+-[RootSignature(RS)]
+-[numthreads(1, 1, 1)]
+-void main(uint3 gid : SV_GroupID) {
+-    uint eff_x = row != 0 ? (gid.x + gid.z * row) : gid.x;
+-    if (row != 0 && eff_x >= asked_x) return;
+-    uint was;
+-    out_buf.InterlockedMax(0, eff_x, was);
+-    out_buf.InterlockedAdd(4, 1u, was);
+-}
+-"#;
+-        let cs = crate::host::compile(SHADER, windows::core::s!("main"), windows::core::s!("cs_5_1")).unwrap();
+-        // SAFETY: WARP device and open command list in `WarpHarness`.
+-        let (root, pso, plain_sig, spread_sig) = unsafe {
+-            let root: ID3D12RootSignature = warp.device.CreateRootSignature(0, &cs[..]).unwrap();
+-            let pso: ID3D12PipelineState = warp
+-                .device
+-                .CreateComputePipelineState(&D3D12_COMPUTE_PIPELINE_STATE_DESC {
+-                    pRootSignature: std::mem::transmute_copy(&root),
+-                    CS: D3D12_SHADER_BYTECODE {
+-                        pShaderBytecode: cs.as_ptr().cast(),
+-                        BytecodeLength: cs.len(),
+-                    },
+-                    ..Default::default()
+-                })
+-                .unwrap();
+-            let plain_arg = D3D12_INDIRECT_ARGUMENT_DESC {
+-                Type: D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH,
+-                ..Default::default()
+-            };
+-            let mut plain_sig: Option<ID3D12CommandSignature> = None;
+-            warp.device
+-                .CreateCommandSignature(
+-                    &D3D12_COMMAND_SIGNATURE_DESC {
+-                        ByteStride: 12,
+-                        NumArgumentDescs: 1,
+-                        pArgumentDescs: &plain_arg,
+-                        NodeMask: 0,
+-                    },
+-                    None::<&ID3D12RootSignature>,
+-                    &mut plain_sig,
+-                )
+-                .unwrap();
+-            let spread_args = [
+-                D3D12_INDIRECT_ARGUMENT_DESC {
+-                    Type: D3D12_INDIRECT_ARGUMENT_TYPE_CONSTANT,
+-                    Anonymous: D3D12_INDIRECT_ARGUMENT_DESC_0 {
+-                        Constant: D3D12_INDIRECT_ARGUMENT_DESC_0_1 {
+-                            RootParameterIndex: 0,
+-                            DestOffsetIn32BitValues: 0,
+-                            Num32BitValuesToSet: 2,
+-                        },
+-                    },
+-                },
+-                D3D12_INDIRECT_ARGUMENT_DESC {
+-                    Type: D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH,
+-                    ..Default::default()
+-                },
+-            ];
+-            let mut spread_sig: Option<ID3D12CommandSignature> = None;
+-            warp.device
+-                .CreateCommandSignature(
+-                    &D3D12_COMMAND_SIGNATURE_DESC {
+-                        ByteStride: 20,
+-                        NumArgumentDescs: 2,
+-                        pArgumentDescs: spread_args.as_ptr(),
+-                        NodeMask: 0,
+-                    },
+-                    Some(&root),
+-                    &mut spread_sig,
+-                )
+-                .unwrap();
+-            (root, pso, plain_sig.unwrap(), spread_sig.unwrap())
+-        };
+-
+-        let (src_buf, src_ptr, _) = warp.shared_buffer(256);
+-        let (_budget_buf, budget_ptr, budget_gpu) = warp.shared_buffer(256);
+-        let (zero_buf, zero_ptr, _) = warp.shared_buffer(256);
+-        let (readback_buf, readback_ptr, _) = warp.shared_buffer(256);
+-        let out_buf = warp.default_uav(256);
+-        let dst_buf = warp.default_uav(256);
+-        let (pred_off, spread_off, _) = lean_layout(1);
+-
+-        let mut run_case = |groups_x: u32, dst_initial: D3D12_RESOURCE_STATES| -> (u32, u32, u64) {
+-            // SAFETY: mapped host buffers and open command list.
+-            unsafe {
+-                (src_ptr as *mut u32).write_volatile(groups_x);
+-                (src_ptr as *mut u32).add(1).write_volatile(1);
+-                (src_ptr as *mut u32).add(2).write_volatile(1);
+-                std::ptr::write_bytes(budget_ptr, 0, 256);
+-                std::ptr::write_bytes(zero_ptr, 0, 256);
+-                std::ptr::write_bytes(readback_ptr, 0, 256);
+-                warp.list.ResourceBarrier(&[transition(
+-                    &out_buf,
+-                    if dst_initial == D3D12_RESOURCE_STATE_COMMON {
+-                        D3D12_RESOURCE_STATE_COMMON
+-                    } else {
+-                        D3D12_RESOURCE_STATE_COPY_SOURCE
+-                    },
+-                    D3D12_RESOURCE_STATE_COPY_DEST,
+-                )]);
+-                warp.list.CopyBufferRegion(&out_buf, 0, &zero_buf, 0, 16);
+-                warp.list.ResourceBarrier(&[transition(
+-                    &out_buf,
+-                    D3D12_RESOURCE_STATE_COPY_DEST,
+-                    D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+-                )]);
+-            }
+-            assert!(record_clamp_with(
+-                &warp.clamp,
+-                &warp.list,
+-                (&dst_buf, dst_initial),
+-                budget_gpu,
+-                (&src_buf, 0),
+-                None,
+-                (2, 12, 1),
+-                false,
+-                SPREAD_LEAN,
+-                false,
+-            ));
+-            // SAFETY: open command list; `dst_buf` is in `INDIRECT_ARGUMENT | PREDICATION`.
+-            unsafe {
+-                warp.list.SetComputeRootSignature(&root);
+-                warp.list.SetPipelineState(&pso);
+-                let zeros = [0u32, 0u32];
+-                warp.list.SetComputeRoot32BitConstants(0, 2, zeros.as_ptr().cast(), 0);
+-                warp.list.SetComputeRootUnorderedAccessView(1, out_buf.GetGPUVirtualAddress());
+-                warp.list.ExecuteIndirect(&plain_sig, 1, &dst_buf, 0, None, 0);
+-                warp.list
+-                    .SetPredication(Some(&dst_buf), pred_off, D3D12_PREDICATION_OP_EQUAL_ZERO);
+-                warp.list
+-                    .ExecuteIndirect(&spread_sig, 1, &dst_buf, spread_off, None, 0);
+-                warp.list.SetPredication(None, 0, D3D12_PREDICATION_OP_EQUAL_ZERO);
+-                warp.list.ResourceBarrier(&[
+-                    transition(
+-                        &out_buf,
+-                        D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+-                        D3D12_RESOURCE_STATE_COPY_SOURCE,
+-                    ),
+-                    transition(
+-                        &dst_buf,
+-                        D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT,
+-                        D3D12_RESOURCE_STATE_COPY_SOURCE,
+-                    ),
+-                ]);
+-                warp.list.CopyBufferRegion(&readback_buf, 0, &out_buf, 0, 8);
+-                warp.list.CopyBufferRegion(&readback_buf, 16, &dst_buf, pred_off, 8);
+-            }
+-            warp.submit_and_wait();
+-            // SAFETY: GPU work complete; readback buffer mapped.
+-            unsafe {
+-                let p = readback_ptr.cast::<u32>().cast_const();
+-                let pred = readback_ptr.add(16).cast::<u64>().cast_const().read_volatile();
+-                (p.read_volatile(), p.add(1).read_volatile(), pred)
+-            }
+-        };
+-
+-        let (max_x_100k, ran_100k, pred_100k) = run_case(100_000, D3D12_RESOURCE_STATE_COMMON);
+-        assert_eq!(max_x_100k, 99_999, "100k spread max eff_x");
+-        assert_eq!(ran_100k, 100_000, "100k spread executed group count");
+-        assert_ne!(pred_100k, 0, "100k sets predication non-zero");
+-
+-        let (max_x_100, ran_100, pred_100) = run_case(100, D3D12_RESOURCE_STATE_COPY_SOURCE);
+-        assert_eq!(max_x_100, 99, "100 plain max eff_x");
+-        assert_eq!(ran_100, 100, "100 plain executed group count");
+-        assert_eq!(pred_100, 0, "100 keeps predication zero");
+-    }
+-
      /// WARP D3D12 execution test proving:
      /// (a) `countBuffer` with a small count (`3`) and `4,093` garbage tail slots
      ///     (`max = 4096`) does NOT blow `BUDGET` or zero valid dispatches in
-@@ -3599,13 +3526,13 @@ void main() {
+@@ -3974,13 +3526,13 @@ void main() {
          // First two calls fit inside the initial 64 KiB scratch buffer and
          // must reuse the exact same `ID3D12Resource`, which stays readable
          // as arguments between them.
@@ -1909,7 +2456,7 @@ index 777fa700f..d7cb25613 100644
          assert_eq!(
              b1.as_raw(),
              b2.as_raw(),
-@@ -3621,7 +3548,7 @@ void main() {
+@@ -3996,7 +3548,7 @@ void main() {
              D3D12_RESOURCE_STATE_COMMON,
              "a new scratch buffer is common"
          );
@@ -1918,7 +2465,7 @@ index 777fa700f..d7cb25613 100644
          assert_eq!(b3.as_raw(), grown.as_raw());
          assert_ne!(
              b3.as_raw(),
-@@ -3651,7 +3578,7 @@ void main() {
+@@ -4026,7 +3578,7 @@ void main() {
              D3D12_RESOURCE_STATE_COMMON,
              "a reset list starts with a common scratch buffer"
          );
@@ -1927,7 +2474,7 @@ index 777fa700f..d7cb25613 100644
          assert_eq!(
              b4.as_raw(),
              b3.as_raw(),
-@@ -3793,8 +3720,8 @@ void main() {
+@@ -4168,8 +3720,8 @@ void main() {
          let hits_gpu = unsafe { hits_buf.GetGPUVirtualAddress() };
          for round in 0..2 {
              // Spends the budget (clamped, not executed), then one group.
@@ -1938,7 +2485,7 @@ index 777fa700f..d7cb25613 100644
              // SAFETY: an open list; the worker's root signature and
              // pipeline; buffers the test holds until the list has run.
              unsafe {
-@@ -3815,7 +3742,7 @@ void main() {
+@@ -4190,7 +3742,7 @@ void main() {
          }
          // A recording with only the small record: the budget is empty
          // again, so it runs.
@@ -1947,7 +2494,7 @@ index 777fa700f..d7cb25613 100644
          // SAFETY: as above.
          unsafe {
              list.list.SetComputeRootSignature(&worker.root);
-@@ -4852,9 +4779,9 @@ float4 paint(float4 at : SV_Position) : SV_Target {
+@@ -5227,9 +4779,9 @@ float4 paint(float4 at : SV_Position) : SV_Target {
  
      impl Bench {
          fn new() -> Option<Self> {
@@ -1984,7 +2531,7 @@ index 27aa84933..bf9f09509 100644
  pub mod framelog;
  #[cfg(windows)]
 diff --git a/crates/victory-gpu/src/list.rs b/crates/victory-gpu/src/list.rs
-index 77010b551..ca52beebe 100644
+index 2e5a2d1fb..cf033c136 100644
 --- a/crates/victory-gpu/src/list.rs
 +++ b/crates/victory-gpu/src/list.rs
 @@ -1466,9 +1466,7 @@ extern "system" fn copy_memory(this: This, dst: u64, src: u64, len: u64, _flags:
@@ -2042,11 +2589,83 @@ index 43aaee723..0c14ce732 100644
  }
  
  /// The compute pipelines of the console's ray-tracing structure builder
+diff --git a/crates/victory-gpu/src/pipeline/make.rs b/crates/victory-gpu/src/pipeline/make.rs
+index 19688e811..1926fb889 100644
+--- a/crates/victory-gpu/src/pipeline/make.rs
++++ b/crates/victory-gpu/src/pipeline/make.rs
+@@ -105,7 +105,7 @@ impl Pending {
+     fn make(&self) {
+         #[cfg(feature = "diagnostics")]
+         let slow = slow::begin(&self.key, &self.shaders, self.graphics.is_some());
+-        self.made.get_or_init(|| {
++        self.make_with(|| {
+             if let Some(hash) = denied(&self.shaders) {
+                 tracing::warn!(hash, shaders = ?self.shaders, "pipeline not built: its shader is in VICTORY_DENY_PIPELINES");
+                 return None;
+@@ -114,6 +114,19 @@ impl Pending {
+         });
+         #[cfg(feature = "diagnostics")]
+         slow::end(slow, self.made.get().is_some_and(|m| m.is_some()));
++    }
++
++    fn make_with(&self, build: impl FnOnce() -> Option<HostPipeline>) {
++        self.made.get_or_init(|| {
++            // A failed translation must complete this queue entry and wake its waiters.
++            match catch_unwind(AssertUnwindSafe(build)) {
++                Ok(pipeline) => pipeline,
++                Err(_) => {
++                    tracing::warn!(shaders = ?self.shaders, "host pipeline build panicked");
++                    None
++                }
++            }
++        });
+         let (lock, done) = &DONE;
+         let _held = lock.lock().unwrap_or_else(|e| e.into_inner());
+         done.notify_all();
+@@ -179,7 +192,10 @@ pub(crate) fn ready(p: &Arc<Pending>) -> Option<&HostPipeline> {
+     if p.made.get().is_none() {
+         start(p, REQUESTED);
+         let early = early_wait();
+-        if first && !early.is_zero() {
++        if p.graphics.is_none() && compute_waits() {
++            // Made here, or waited for while a worker makes it (#1312).
++            p.make();
++        } else if first && !early.is_zero() {
+             wait_once(p, early);
+         } else {
+             wait(p, crate::frame::current());
+@@ -247,6 +263,26 @@ fn wait_once(p: &Pending, most: Duration) {
+     crate::framelog::add(crate::framelog::T::PipelineWaitUs, started.elapsed().as_micros() as u64);
+ }
+ 
++/// Whether a dispatch waits for its compute pipeline until it is made,
++/// whatever the frame's budget ([`wait_budget`]); a draw still waits within
++/// the budget and is dropped while its pipeline is not there.
++///
++/// A dropped draw is drawn again in the next frame. A dropped dispatch may
++/// not be: the title runs some compute passes once, when a scene changes
++/// (a buffer reset or cleared), and what they leave is read for as long as
++/// the scene lasts. In the prison corridor a compute program met for the
++/// first time took 4.4 s to make on a 16 GB machine; its one dispatch was
++/// dropped after the half second of budget, and the windows of the room
++/// before stayed blended over the whole picture for minutes (run 195).
++/// A wait of seconds once (the pipeline library has it on the next run)
++/// against a picture wrong until the scene ends.
++/// On by default; `VICTORY_PIPELINE_COMPUTE_WAIT=0`: within the budget, as
++/// before.
++fn compute_waits() -> bool {
++    static ON: OnceLock<bool> = OnceLock::new();
++    *ON.get_or_init(|| std::env::var_os("VICTORY_PIPELINE_COMPUTE_WAIT").is_none_or(|v| v != "0"))
++}
++
+ /// Pipelines made again for the formats bound at a draw, since the start.
+ static VARIANTS: AtomicU64 = AtomicU64::new(0);
+ 
 diff --git a/crates/victory-gpu/src/resource.rs b/crates/victory-gpu/src/resource.rs
-index 485d3d4ea..4da738faf 100644
+index f9af89395..e125a2dab 100644
 --- a/crates/victory-gpu/src/resource.rs
 +++ b/crates/victory-gpu/src/resource.rs
-@@ -1410,7 +1410,7 @@ fn hosted(this: This, make: bool) -> Option<Made> {
+@@ -1434,7 +1434,7 @@ fn hosted(this: This, make: bool) -> Option<Made> {
                      && (!crate::texture::committed(r.data().cast_const(), bytes as usize)
                          || crate::descriptor::host::next_start(start, start.saturating_add(bytes)).is_some()
                          || crate::descriptor::host::first_viewed(start).is_some_and(|first| first > 0));
@@ -2055,7 +2674,7 @@ index 485d3d4ea..4da738faf 100644
              let cut = reserved
                  .as_ref()
                  .zip(crate::host::host())
-@@ -1431,14 +1431,14 @@ fn hosted(this: This, make: bool) -> Option<Made> {
+@@ -1455,14 +1455,14 @@ fn hosted(this: This, make: bool) -> Option<Made> {
          // ours (`crate::small`, `VICTORY_SMALL_TEXTURES=1`).
          let mut placed = None;
          let texture = match texture {
@@ -2072,7 +2691,7 @@ index 485d3d4ea..4da738faf 100644
                  }
                  None => host_texture(&r.desc, r.host.state, clear),
              },
-@@ -2262,6 +2262,36 @@ pub(crate) fn host_copy(this: This) -> Option<std::sync::Arc<HostTexture>> {
+@@ -2286,6 +2286,36 @@ pub(crate) fn host_copy(this: This) -> Option<std::sync::Arc<HostTexture>> {
      hosted(this, true).map(|made| made.0)
  }
  
@@ -2109,7 +2728,7 @@ index 485d3d4ea..4da738faf 100644
  /// The host's description of a host copy of a title texture of `desc`:
  /// the host layout (no console layout, alignment or flags but render
  /// target, depth, unordered access and no shader access), the host's
-@@ -2270,7 +2300,7 @@ pub(crate) fn host_copy(this: This) -> Option<std::sync::Arc<HostTexture>> {
+@@ -2294,7 +2324,7 @@ pub(crate) fn host_copy(this: This) -> Option<std::sync::Arc<HostTexture>> {
  fn host_desc(desc: &ResourceDesc) -> Option<ResourceDesc> {
      const PC_FLAGS: u32 = 0xf; // render target, depth, UAV, no shader access
      if desc.dimension == BUFFER {
@@ -2118,7 +2737,7 @@ index 485d3d4ea..4da738faf 100644
      }
      let mut d = *desc;
      d.layout = 0;
-@@ -2337,7 +2367,7 @@ fn host_texture(
+@@ -2361,7 +2391,7 @@ fn host_texture(
      desc: &ResourceDesc,
      state: u32,
      clear: *const c_void,
@@ -2127,7 +2746,7 @@ index 485d3d4ea..4da738faf 100644
      host_texture_as(desc, state, clear, false)
  }
  
-@@ -2349,10 +2379,10 @@ fn host_texture_as(
+@@ -2373,10 +2403,10 @@ fn host_texture_as(
      state: u32,
      clear: *const c_void,
      reserved: bool,
@@ -2480,7 +3099,7 @@ index 91a4ffe33..1c9d29e58 100644
          dxil,
          user_data: Vec::new(),
 diff --git a/crates/victory-shader/src/emit/lower.rs b/crates/victory-shader/src/emit/lower.rs
-index e42c4fa9d..42e0a07b0 100644
+index 68aeebd55..4a506ecc9 100644
 --- a/crates/victory-shader/src/emit/lower.rs
 +++ b/crates/victory-shader/src/emit/lower.rs
 @@ -61,6 +61,10 @@ mod guarded;
@@ -2494,7 +3113,7 @@ index e42c4fa9d..42e0a07b0 100644
  
  type Why = &'static str;
  
-@@ -788,11 +792,29 @@ fn lds_meetings(p: &crate::ir::Program, st: &Structured, all: &[bool]) -> Option
+@@ -799,11 +803,29 @@ fn lds_meetings(p: &crate::ir::Program, st: &Structured, all: &[bool]) -> Option
                      if all[b] || find(&mut region, b) != r {
                          continue;
                      }
@@ -2527,7 +3146,7 @@ index e42c4fa9d..42e0a07b0 100644
              }
          }
          return None;
-@@ -1493,6 +1515,7 @@ impl<'a> Lower<'a> {
+@@ -1748,6 +1770,7 @@ impl<'a> Lower<'a> {
                  }
              }
          }
@@ -2535,7 +3154,7 @@ index e42c4fa9d..42e0a07b0 100644
          let mut l = Lower {
              s,
              x,
-@@ -3450,7 +3473,12 @@ impl<'a> Lower<'a> {
+@@ -3705,7 +3728,12 @@ impl<'a> Lower<'a> {
                      self.boolean(m, at).map(|a| (a, None))
                  };
                  self.balloting.remove(&lo);
@@ -2549,7 +3168,7 @@ index e42c4fa9d..42e0a07b0 100644
                  let i32t = self.s.t.i32;
                  let four = self.s.m.named_struct("dx.types.fouri32", vec![i32t; 4]);
                  let r = self
-@@ -4191,7 +4219,7 @@ impl<'a> Lower<'a> {
+@@ -4446,7 +4474,7 @@ impl<'a> Lower<'a> {
          let &m = self.x.st.scc_some.get(&scc).ok_or(LANE_MASK)?;
          let made = self.def_block.get(&scc).copied();
          let at = |l: &Self| match made {
@@ -2558,7 +3177,7 @@ index e42c4fa9d..42e0a07b0 100644
              Some(b) if b == l.cur_ir => Ok(l.cur),
              Some(b) => l.tail[b].ok_or("a lane mask written after its use"),
          };
-@@ -4207,7 +4235,10 @@ impl<'a> Lower<'a> {
+@@ -4462,7 +4490,10 @@ impl<'a> Lower<'a> {
              return Err(LANE_MASK);
          }
          let at = at(self)?;
@@ -2583,7 +3202,7 @@ index 2357cb637..c7dd97b5a 100644
          dxil: lowered.dxil,
          user_data: lowered.user_data,
 diff --git a/crates/victory-shader/src/emit/mod.rs b/crates/victory-shader/src/emit/mod.rs
-index 4d61f7c4a..6eaada78f 100644
+index 1c3dfa56b..218c94c4b 100644
 --- a/crates/victory-shader/src/emit/mod.rs
 +++ b/crates/victory-shader/src/emit/mod.rs
 @@ -149,8 +149,8 @@ pub use rect::rect_list_gs;

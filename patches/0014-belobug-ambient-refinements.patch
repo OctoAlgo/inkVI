@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Octo <180629317+OctoAlgo@users.noreply.github.com>
 Date: Wed, 25 Nov 2026 19:42:05 +0100
-Subject: [PATCH 14/37] Belobug's ambient light refinements on #917's stand-in
+Subject: [PATCH 14/38] Belobug's ambient light refinements on #917's stand-in
  (beloooo, VIctory-Belobug-AMD 4ffc4766 cd9f78ce 44dcd437 c3bd5612)
 
 VICTORY_AMBIENT_TINT, VICTORY_AMBIENT_SHADE (depth-based crease/contact shading),
@@ -562,7 +562,7 @@ index 9ceae9d61..b05693d06 100644
      #[test]
      fn ambient_pass_builds() {
 diff --git a/crates/victory-gpu/src/draw.rs b/crates/victory-gpu/src/draw.rs
-index 659f3c4f6..ff363e233 100644
+index 2f199aa54..afb6241f4 100644
 --- a/crates/victory-gpu/src/draw.rs
 +++ b/crates/victory-gpu/src/draw.rs
 @@ -2144,6 +2144,11 @@ impl State {
@@ -697,7 +697,7 @@ index c34858585..43aaee723 100644
                  #[cfg(windows)]
                  walks: OnceLock::new(),
 diff --git a/crates/victory-shader/src/emit/mod.rs b/crates/victory-shader/src/emit/mod.rs
-index bbda88d88..4d61f7c4a 100644
+index d4a57f2d7..1c3dfa56b 100644
 --- a/crates/victory-shader/src/emit/mod.rs
 +++ b/crates/victory-shader/src/emit/mod.rs
 @@ -857,7 +857,6 @@ fn emit_forms(

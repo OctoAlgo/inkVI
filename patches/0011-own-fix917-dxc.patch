@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Octo <180629317+OctoAlgo@users.noreply.github.com>
 Date: Wed, 25 Nov 2026 18:08:03 +0100
-Subject: [PATCH 11/37] ambient stand-in compiles through the DXC fallback;
+Subject: [PATCH 11/38] ambient stand-in compiles through the DXC fallback;
  #995's title tests on Windows only
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
@@ -73,7 +73,7 @@ index 9858f5e78..9ceae9d61 100644
      unsafe {
          let root: ID3D12RootSignature = device.CreateRootSignature(0, &code)?;
 diff --git a/crates/victory-shader/src/emit/mod.rs b/crates/victory-shader/src/emit/mod.rs
-index aa1a9cda4..295760d64 100644
+index 913811c0f..7a7154ca5 100644
 --- a/crates/victory-shader/src/emit/mod.rs
 +++ b/crates/victory-shader/src/emit/mod.rs
 @@ -89,7 +89,7 @@ mod diff_tests;

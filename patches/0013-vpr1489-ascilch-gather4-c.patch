@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: AscilCH <178020422+AscilCH@users.noreply.github.com>
 Date: Tue, 24 Nov 2026 19:20:55 +0100
-Subject: [PATCH 13/37] Shaders: lower image_gather4_c_lz and
+Subject: [PATCH 13/38] Shaders: lower image_gather4_c_lz and
  image_gather4_c_lz_o (MIMG 0x4f, 0x5f)
 
 Lower GFX10 comparison gather instructions `image_gather4_c_lz` (0x4f) and
@@ -30,10 +30,10 @@ Kit-Licence: GPL-3.0
  2 files changed, 310 insertions(+), 2 deletions(-)
 
 diff --git a/crates/victory-shader/src/emit/lower.rs b/crates/victory-shader/src/emit/lower.rs
-index ea850a770..60525de46 100644
+index c1a2b1a52..533f21932 100644
 --- a/crates/victory-shader/src/emit/lower.rs
 +++ b/crates/victory-shader/src/emit/lower.rs
-@@ -9981,6 +9981,7 @@ impl<'a> Lower<'a> {
+@@ -10236,6 +10236,7 @@ impl<'a> Lower<'a> {
              "image_sample_c" if self.s.pixel => (64, true),
              "image_sample_c_cl" if self.s.pixel => (64, true),
              "image_gather4" | "image_gather4_lz" | "image_gather4_lz_o" | "image_gather4_l" | "image_gather4_l_o" => (73, true),
@@ -41,7 +41,7 @@ index ea850a770..60525de46 100644
              "image_load" | "image_load_mip" => (66, false),
              "image_get_resinfo" => (72, false),
              _ => return Err(name),
-@@ -10031,7 +10032,7 @@ impl<'a> Lower<'a> {
+@@ -10286,7 +10287,7 @@ impl<'a> Lower<'a> {
              let ss = sampler.ok_or("an untracked sampler")?;
              // Comparison: the reference value is the first address after
              // the bias, and the sampler is a comparison sampler.
@@ -50,7 +50,7 @@ index ea850a770..60525de46 100644
              if cmp && (*a16 || dmask.count_ones() != 1) {
                  return Err("a comparison sample of 16-bit coordinates or several channels");
              }
-@@ -10332,9 +10333,19 @@ impl<'a> Lower<'a> {
+@@ -10587,9 +10588,19 @@ impl<'a> Lower<'a> {
                      if name == "image_gather4" {
                          return Err("a gather with implicit level");
                      }
@@ -70,7 +70,7 @@ index ea850a770..60525de46 100644
                      if matches!(name, "image_gather4_l" | "image_gather4_l_o")
                          && coords == 2
                          && spatial == 2
-@@ -10405,6 +10416,21 @@ impl<'a> Lower<'a> {
+@@ -10660,6 +10671,21 @@ impl<'a> Lower<'a> {
                          }
                          gathered = Some(g);
                          read.expect("four reads")
@@ -92,7 +92,7 @@ index ea850a770..60525de46 100644
                      } else {
                          args.extend(&os[..2]);
                          args.push(self.s.m.i32(dmask.trailing_zeros()));
-@@ -10448,7 +10474,7 @@ impl<'a> Lower<'a> {
+@@ -10703,7 +10729,7 @@ impl<'a> Lower<'a> {
          let Operand::Vector { reg, .. } = *data else {
              return Err("an image result");
          };

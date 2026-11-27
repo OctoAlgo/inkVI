@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: UwUCammie <UwUCammie@users.noreply.github.com>
 Date: Wed, 25 Nov 2026 16:28:27 +0000
-Subject: [PATCH 20/37] GPU: fault-guarded in-place write-back in plaincopy for
+Subject: [PATCH 20/38] GPU: fault-guarded in-place write-back in plaincopy for
  write_mapped (VICTORY_COPY_PLAIN=1)
 
 Kit-Source: victory-fork PR #1032 (UwUCammie)
@@ -12,10 +12,10 @@ Kit-Licence: GPL-3.0
  2 files changed, 110 insertions(+), 12 deletions(-)
 
 diff --git a/crates/victory-gpu/src/host.rs b/crates/victory-gpu/src/host.rs
-index fc76a0896..6e9cbe911 100644
+index 8ccfec0bd..ec8dca1e8 100644
 --- a/crates/victory-gpu/src/host.rs
 +++ b/crates/victory-gpu/src/host.rs
-@@ -15231,7 +15231,7 @@ pub(crate) fn write_mapped(dst: *mut u8, src: *const u8, len: usize) {
+@@ -15310,7 +15310,7 @@ pub(crate) fn write_mapped(dst: *mut u8, src: *const u8, len: usize) {
          // destination.
          unsafe { WriteProcessMemory(GetCurrentProcess(), at as _, from.cast(), n, &mut done) != 0 }
      };

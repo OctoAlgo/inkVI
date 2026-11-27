@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Yorivel <197960446+Yorivel@users.noreply.github.com>
 Date: Thu, 26 Nov 2026 01:13:00 +0200
-Subject: [PATCH 30/37] GPU: VICTORY_BACK_QUIET=1: copy-backs of write-watched
+Subject: [PATCH 30/38] GPU: VICTORY_BACK_QUIET=1: copy-backs of write-watched
  memory no longer read as title writes
 
 After a copy-back writes private, write-watched title memory, the pages'

@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Octo <180629317+OctoAlgo@users.noreply.github.com>
 Date: Wed, 25 Nov 2026 17:05:20 +0100
-Subject: [PATCH 03/37] VICTORY_NO_WATCHDOG loader hook
+Subject: [PATCH 03/38] VICTORY_NO_WATCHDOG loader hook
 
 From the testers build (r4tedx integration/testers 94e0ea5, upstream
 VIctory PR #454): with VICTORY_NO_WATCHDOG set, the loader disarms the

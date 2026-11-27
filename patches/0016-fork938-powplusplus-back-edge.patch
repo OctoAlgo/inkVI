@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: powplusplus <222417016+powplusplus@users.noreply.github.com>
 Date: Wed, 25 Nov 2026 10:03:24 +1000
-Subject: [PATCH 16/37] Shaders: one back edge per loop header
+Subject: [PATCH 16/38] Shaders: one back edge per loop header
 
 vkd3d-proton's DXIL conversion keeps one back edge per loop header, as
 DXC's code has. With several, the others stay in the header's forward
@@ -23,7 +23,7 @@ Kit-Licence: GPL-3.0
  2 files changed, 121 insertions(+), 1 deletion(-)
 
 diff --git a/crates/victory-shader/src/emit/bitcode.rs b/crates/victory-shader/src/emit/bitcode.rs
-index e171e2935..96227c1fb 100644
+index b6f24a8f8..032673c68 100644
 --- a/crates/victory-shader/src/emit/bitcode.rs
 +++ b/crates/victory-shader/src/emit/bitcode.rs
 @@ -5,7 +5,7 @@
@@ -120,7 +120,7 @@ index e171e2935..96227c1fb 100644
      pub fn write(&self) -> Vec<u8> {
          let mut w = Writer::default();
          w.bytes(b"BC\xC0\xDE");
-@@ -1274,6 +1352,47 @@ mod tests {
+@@ -1280,6 +1358,47 @@ mod tests {
  
      /// The written bytes are pinned to what the writer produced before the
      /// worklist and the reused record buffers.

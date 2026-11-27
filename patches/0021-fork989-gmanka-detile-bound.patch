@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: gmanka <gmankab@gmail.com>
 Date: Wed, 25 Nov 2026 20:14:51 +0500
-Subject: [PATCH 21/37] GPU: bound detiling slices to the upload allocation
+Subject: [PATCH 21/38] GPU: bound detiling slices to the upload allocation
 
 GetCopyableFootprints returns an allocation size that may stop after the
 last row's payload. The detiler used a full aligned pitch for every row
@@ -22,7 +22,7 @@ Kit-Licence: GPL-3.0
  1 file changed, 33 insertions(+), 5 deletions(-)
 
 diff --git a/crates/victory-gpu/src/texture.rs b/crates/victory-gpu/src/texture.rs
-index 769b051e2..3ec07e376 100644
+index e91e1c92b..b5935e338 100644
 --- a/crates/victory-gpu/src/texture.rs
 +++ b/crates/victory-gpu/src/texture.rs
 @@ -1133,6 +1133,14 @@ pub(crate) fn card_writes(list: &HostList, resource: This, texture: &ID3D12Resou
@@ -40,7 +40,7 @@ index 769b051e2..3ec07e376 100644
  impl Staging {
      /// Levels on demand: what says, beside the mapping, which levels of
      /// the texture are the title's now. First the lowest level a live view
-@@ -1460,14 +1468,18 @@ impl Staging {
+@@ -1442,14 +1450,18 @@ impl Staging {
                  "a sampled texture's memory is all zero (not streamed yet, or a failed BCPack read)"
              );
          }
@@ -63,7 +63,7 @@ index 769b051e2..3ec07e376 100644
              };
              if mip < 32 && held & (1 << mip) == 0 {
                  // Not the title's: zeros, not what lies in that memory.
-@@ -1476,7 +1488,7 @@ impl Staging {
+@@ -1458,7 +1470,7 @@ impl Staging {
              }
              if let Err(e) =
                  self.layout
@@ -72,7 +72,7 @@ index 769b051e2..3ec07e376 100644
              {
                  tracing::warn!(?e, mip, slice, "texture not detiled");
                  return;
-@@ -2063,3 +2075,19 @@ mod title_memory_tests {
+@@ -2124,3 +2136,19 @@ mod title_memory_tests {
          }
      }
  }

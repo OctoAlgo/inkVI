@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Octo <180629317+OctoAlgo@users.noreply.github.com>
 Date: Thu, 26 Nov 2026 13:28:55 +0100
-Subject: [PATCH 35/37] VICTORY_PIPELINE_WAIT_EARLY_MS: a pipeline's first draw
+Subject: [PATCH 35/38] VICTORY_PIPELINE_WAIT_EARLY_MS: a pipeline's first draw
  waits for it while early pipelines are queued (dark-cell fix)
 
 Round 9b: the dark cell comes from host pipelines missing from the NVIDIA
@@ -17,14 +17,14 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 Kit-Source: own (dark-cell fix, step 1)
 Kit-Licence: GPL-3.0
 ---
- crates/victory-gpu/src/pipeline/make.rs | 69 +++++++++++++++++++++++--
- 1 file changed, 66 insertions(+), 3 deletions(-)
+ crates/victory-gpu/src/pipeline/make.rs | 84 ++++++++++++++++++-------
+ 1 file changed, 61 insertions(+), 23 deletions(-)
 
 diff --git a/crates/victory-gpu/src/pipeline/make.rs b/crates/victory-gpu/src/pipeline/make.rs
-index b00e76db9..61bd1297e 100644
+index e300c864f..d9dbf03a8 100644
 --- a/crates/victory-gpu/src/pipeline/make.rs
 +++ b/crates/victory-gpu/src/pipeline/make.rs
-@@ -171,12 +171,18 @@ pub(crate) fn waiting() -> u64 {
+@@ -172,14 +172,15 @@ pub(crate) fn waiting() -> u64 {
  pub(crate) fn ready(p: &Arc<Pending>) -> Option<&HostPipeline> {
      // A still-pending pipeline was requested by the title too. Prewarm it
      // on the next launch, even if this run never got to use it.
@@ -35,20 +35,37 @@ index b00e76db9..61bd1297e 100644
      }
      if p.made.get().is_none() {
          start(p, REQUESTED);
--        wait(p, crate::frame::current());
+-        if p.graphics.is_none() && compute_waits() {
+-            // Made here, or waited for while a worker makes it.
+-            p.make();
 +        let early = early_wait();
 +        if first && !early.is_zero() && EARLY_LEFT.load(Ordering::Relaxed) > 0 {
 +            wait_once(p, early);
-+        } else {
-+            wait(p, crate::frame::current());
-+        }
-     }
-     let made = p.made.get()?.as_ref();
-     // The first time the made pipeline goes to a draw or dispatch: noted
-@@ -190,6 +196,54 @@ pub(crate) fn ready(p: &Arc<Pending>) -> Option<&HostPipeline> {
+         } else {
+             wait(p, crate::frame::current());
+         }
+@@ -196,24 +197,52 @@ pub(crate) fn ready(p: &Arc<Pending>) -> Option<&HostPipeline> {
      made
  }
  
+-/// Whether a dispatch waits for its compute pipeline until it is made,
+-/// whatever the frame's budget ([`wait_budget`]); a draw still waits within
+-/// the budget and is dropped while its pipeline is not there.
+-///
+-/// A dropped draw is drawn again in the next frame. A dropped dispatch may
+-/// not be: the title runs some compute passes once, when a scene changes
+-/// (a buffer reset or cleared), and what they leave is read for as long as
+-/// the scene lasts. In the prison corridor a compute program met for the
+-/// first time took 4.4 s to make on a 16 GB machine; its one dispatch was
+-/// dropped after the half second of budget, and the windows of the room
+-/// before stayed blended over the whole picture for minutes (run 195).
+-/// A wait of seconds once (the pipeline library has it on the next run)
+-/// against a picture wrong until the scene ends.
+-/// On by default; `VICTORY_PIPELINE_COMPUTE_WAIT=0`: within the budget, as
+-/// before.
+-fn compute_waits() -> bool {
+-    static ON: OnceLock<bool> = OnceLock::new();
+-    *ON.get_or_init(|| std::env::var_os("VICTORY_PIPELINE_COMPUTE_WAIT").is_none_or(|v| v != "0"))
 +/// `VICTORY_PIPELINE_WAIT_EARLY_MS=<ms>` (off unless set): while pipelines
 +/// listed for an early start are still queued, a draw or dispatch that is
 +/// the first to ask for a pipeline not made yet waits for it up to <ms>
@@ -95,12 +112,10 @@ index b00e76db9..61bd1297e 100644
 +        EARLY_WAITS[1].fetch_add(1, Ordering::Relaxed);
 +    }
 +    crate::framelog::add(crate::framelog::T::PipelineWaitUs, started.elapsed().as_micros() as u64);
-+}
-+
- /// Pipelines made again for the formats bound at a draw, since the start.
- static VARIANTS: AtomicU64 = AtomicU64::new(0);
+ }
  
-@@ -359,6 +413,7 @@ impl Queue {
+ /// Pipelines made again for the formats bound at a draw, since the start.
+@@ -385,6 +414,7 @@ impl Queue {
              self.requested.push_back(p.clone());
          } else {
              self.early.push_back(p.clone());
@@ -108,7 +123,7 @@ index b00e76db9..61bd1297e 100644
          }
          Some(prev == NOT_QUEUED)
      }
-@@ -366,7 +421,13 @@ impl Queue {
+@@ -392,7 +422,13 @@ impl Queue {
      fn pop(&mut self) -> Option<Arc<Pending>> {
          let p = self.requested.pop_front().or_else(|| {
              // An early entry can have been promoted and claimed already.
@@ -123,7 +138,7 @@ index b00e76db9..61bd1297e 100644
                  .find(|p| p.queue_state.load(Ordering::Relaxed) == EARLY)
          })?;
          p.queue_state.store(MAKING, Ordering::Relaxed);
-@@ -511,6 +572,8 @@ fn watch() {
+@@ -537,6 +573,8 @@ fn watch() {
                  made = MADE.load(Ordering::Relaxed),
                  loaded = LOADED.load(Ordering::Relaxed),
                  started_early = EARLY.load(Ordering::Relaxed),

@@ -20,5 +20,8 @@ Optional: `VICTORY_DISPLAY_MODE=WxH` (preset: 1920x1080),
 `__GL_SHADER_DISK_CACHE_PATH=<dir>` + `__GL_SHADER_DISK_CACHE_SKIP_CLEANUP=1` (own NVIDIA cache; keep it warm,
 a cold one means the long first start of `docs/known-issues.md`).
 To reproduce our `--pr9b` numbers exactly, add `VICTORY_DYNAMIC_SLOTS=524288` (read docs/known-issues.md first).
+`VICTORY_DT_MAX=0.2` (patch 0038, off by default; commented in `speed.env`): below 15 fps the title runs in slow
+motion (every frame counts 1/15 s); this lets game time follow real time down to 5 fps. Untested under driving and
+combat: read docs/known-issues.md first.
 
 Borderless window: see inkVI-ultrawide (its `0001-own-borderless-window`); no patch of this kit adds it.

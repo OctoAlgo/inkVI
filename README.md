@@ -5,6 +5,11 @@ on Linux (Proton + vkd3d-proton) on NVIDIA cards. No binaries, game data, saves 
 a pinned public base commit, an ordered patch series, a build script, a launch preset and notes.
 It is a living base: we build on it, and anyone may take single patches from it (GPL-3.0, like the base).
 
+**We work on the Series X profile** (`--console series-x`): the aim is the full picture on a fast card, and our
+measurements and picture checks are made there. The Series S profile is faster and needs less memory; for work focused
+on it, and for an opt-in ray-tracing preview on Linux, see ThomasHFWright's
+[LinVxtory](https://github.com/ThomasHFWright/LinVxtory) (its earlier builds used this kit's v0.1).
+
 ## What's in it
 
 - `BASE`: the pinned base (victory-fork `main` at `4c6046614`).
@@ -71,7 +76,8 @@ window, cutscenes without bars. Work in progress: [inkVI-ultrawide](https://gith
 - Frame rate in the prison and Chapter 1
 
 **Later**
-- Ray tracing, building on LinVxtory's preview
+- Ray tracing, building on ThomasHFWright's [LinVxtory](https://github.com/ThomasHFWright/LinVxtory) preview and the
+  fork's structure builder
 - Picture fixes: eyes and glasses, the black phone screen
 - Tools: the ultrawide fix on its own, and the test tooling we use
 - Quicker test scenes

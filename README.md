@@ -62,6 +62,18 @@ Patches are plain `git format-patch` mails; paths in this README are relative to
 A separate kit for 32:9 / 21:9 on top of this one: the title's own output size, the camera's field of view, a borderless
 window, cutscenes without bars. Work in progress: [inkVI-ultrawide](https://github.com/OctoAlgo/inkVI-ultrawide).
 
+## inkVI-dive
+Test tooling on top of this kit: teleport, bookmarks, clock and cutscene replay from a command channel, and captures
+for comparing pictures. A testing aid, work in progress: [inkVI-dive](https://github.com/OctoAlgo/inkVI-dive).
+
+## Linux problems and where to talk
+- [docs/linux-problems.md](docs/linux-problems.md): what you see, why it happens on Linux / Proton / NVIDIA, the fix
+  and who made it. Seventeen entries so far; several causes are marked unverified.
+- [docs/wineserver-viewtree.md](docs/wineserver-viewtree.md): building a wineserver that keeps memory views in a tree.
+  On stock Proton 11 with cold caches this kit ran at 1-2 fps for us; with that wineserver and warm caches, 5-6.6.
+- [Discussions](https://github.com/OctoAlgo/inkVI/discussions/1): setups, numbers and fixes from anyone running VIctory
+  on Linux, whatever the fork.
+
 ## Roadmap
 
 **In v0.2.1**
